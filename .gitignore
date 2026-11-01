@@ -32,6 +32,10 @@ migrate_working_dir/
 .pub/
 /build/
 /coverage/
+*.db
+*.db-*
+*.sqlite
+*.sqlite-*
 
 # Local credentials and signing configuration
 .env
