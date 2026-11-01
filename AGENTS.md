@@ -24,7 +24,7 @@
 
 ## Development procedure
 
-1. Inspect current `main`, open PRs, README, Flutter code, tests, CI, and the relevant backend contract **before** editing. Preserve concurrent work; do not overwrite the pending offline-storage PR.
+1. Inspect current `main`, open PRs, README, Flutter code, tests, CI, and the relevant backend contract **before** editing. Preserve concurrent work, existing branches, and open pull requests. Do not overwrite unrelated changes.
 2. Follow ordinary Dart/Flutter conventions. Keep changes narrow, tests meaningful, and dependencies minimal. Do not introduce QR capture, live sync, domain models, or new backend contracts without an approved feature assignment.
 3. Use a focused feature branch and PR for a significant milestone; use logically scoped Conventional Commits within that milestone. Avoid trivial PRs, giant commits, and manufactured commit counts; respect WhiteTree's 50-commit ceiling.
 4. Keep `main` protected; never push directly, weaken rulesets, change CODEOWNERS (`@Syris-EkzD`), or merge without human authorization. The required CI check is `Repository integrity` and applies to everyone.
