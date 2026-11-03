@@ -12,7 +12,7 @@ An offline or uploaded scan is **not** automatically an official attendance resu
 
 ## Current status
 
-**Development foundation ready; not yet an operational scanning app.** The Android app currently shows a landing screen. A tested local storage component can keep synthetic, provisional scans and their pending or confirmed upload outcomes, including across app restarts.
+**Development foundation ready; not yet an operational scanning app.** The Android app currently shows a landing screen. A tested local storage component can save synthetic scans across app restarts, list pending records, and store a status when a confirmation is supplied. No scan is uploaded by the app yet.
 
 QR scanning, sign-in, staff assignments, and live synchronization are **not available yet**. The current local storage is not encrypted or isolated by staff account, so **do not use real student data**.
 
