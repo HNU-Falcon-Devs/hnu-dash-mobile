@@ -1,12 +1,24 @@
 # HNU DASH Mobile
 
-HNU DASH Mobile is the Flutter companion app for collecting physical attendance at HNU events. The Android app currently launches a landing screen. A local SQLite component can save and read provisional scans, list pending scans, and record a confirmed accepted or rejected result. Scanning and synchronization are not available in the app yet.
+HNU DASH Mobile is the planned Android attendance tool for authorized staff at Holy Name University events. Staff will scan physical student IDs and, when internet access is unavailable, keep scans on the device until they can be sent for checking.
 
-## Stack and setup
+## How it fits into HNU DASH
 
-- Flutter (stable channel) and Dart
-- Android SDK and an Android emulator or device
-- SQLite via `sqflite` for local provisional scan storage
+- **Mobile (this repository)** will collect scans on-site and hold them safely until they can be synchronized.
+- [Backend](https://github.com/HNU-Falcon-Devs/hnu-dash-backend) will check uploaded scans and determine official attendance.
+- [Web](https://github.com/HNU-Falcon-Devs/hnu-dash-web) will let organizers manage events and review records, and students view their attendance.
+
+An offline or uploaded scan is **not** automatically an official attendance result.
+
+## Current status
+
+**Development foundation ready; not yet an operational scanning app.** The Android app currently shows a landing screen. A tested local storage component can keep synthetic, provisional scans and their pending or confirmed upload outcomes, including across app restarts.
+
+QR scanning, sign-in, staff assignments, and live synchronization are **not available yet**. The current local storage is not encrypted or isolated by staff account, so **do not use real student data**.
+
+## Developer setup
+
+Requires Flutter (stable channel), Dart, the Android SDK, and an emulator or Android device. The local store uses SQLite through `sqflite`.
 
 Install [Flutter](https://docs.flutter.dev/get-started/install) with Android development support, then run:
 
@@ -16,11 +28,9 @@ flutter pub get
 flutter run
 ```
 
-The Android application ID is `dev.hnudash.hnu_dash_mobile` for development. Maintainers must approve the final ID before release.
+The development Android application ID is `dev.hnudash.hnu_dash_mobile`; the final ID requires maintainer approval.
 
 ## Validation
-
-Run the same checks used by CI:
 
 ```bash
 flutter pub get
@@ -30,14 +40,8 @@ flutter test
 flutter build apk --debug
 ```
 
-Run just the SQLite persistence tests with `flutter test test/offline_attendance_store_test.dart`. Linux test hosts need the SQLite native library (`libsqlite3-dev`); CI installs it explicitly.
+Run the storage tests alone with `flutter test test/offline_attendance_store_test.dart`. Linux test hosts need the SQLite native library (`libsqlite3-dev`), which CI installs. Debug APKs are generated under `build/app/outputs/flutter-apk/` and ignored by Git.
 
-The APK is generated under `build/app/outputs/flutter-apk/` and is ignored by Git.
+## Safety and future integration
 
-## System boundary
-
-HNU DASH Web is a separately maintained Next.js management interface. The separate Supabase/PostgreSQL backend is the authoritative source for attendance. Locally stored scans have client-generated IDs for later retries, but remain provisional until that backend confirms a result. The mobile app must not create authoritative attendance records or bypass backend authorization.
-
-Before enabling real student data or capture, maintainers must agree on event authorization, credential format, and the backend synchronization and confirmation contract. Privacy decisions are also required for data minimization, encryption at rest, retention and deletion, and device access. The current SQLite database is not encrypted and must not be treated as production-safe for student data. Event assignment, ID scanning, authentication, and live synchronization remain deferred.
-
-Keep changes focused on this repository. Use standard Flutter conventions and add dependencies only when a feature requires them.
+Mobile will never determine official attendance or bypass backend permissions. Before enabling real collection, the team must approve event authorization, ID format, backend synchronization rules, and privacy safeguards such as encryption, staff access, data retention, and recovery. Keep changes scoped to this repository and add dependencies only when needed.
