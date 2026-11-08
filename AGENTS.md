@@ -5,7 +5,7 @@
 - This repository owns the Flutter Android attendance collector, not the Web UI or authoritative backend.
 - Mobile scans physical HNU ID QR codes, uses assigned frozen rosters for offline matching, and queues provisional records in local SQLite. It communicates directly with approved backend interfaces, never through Web.
 - Supabase/PostgreSQL alone enforces identity, permissions, event lifecycle, scan validation, reconciliation, and official attendance. Mobile must not declare a student officially present.
-- The proposed shared contract is maintained by Backend: [integration-v0 (Backend PR #2)](https://github.com/HNU-Falcon-Devs/hnu-dash-backend/pull/2). **It is unapproved and unimplemented.** Reference it; do not copy its payloads, invent endpoints, or treat proposed decisions as settled. Shared changes require WhiteTree Orchestrator approval.
+- Backend owns the merged, implemented integration contracts: [M2.1 Staff assignment and activation](https://github.com/HNU-Falcon-Devs/hnu-dash-backend/blob/main/docs/integration/milestone-2-part-1.md) and [M2.3 online scan ingestion](https://github.com/HNU-Falcon-Devs/hnu-dash-backend/blob/main/docs/integration/milestone-2-part-3-scan-ingestion.md). Closed Backend PR #2 is superseded and must not be treated as approved. Only use implemented operations in the approved milestone scope; shared contract changes require WhiteTree Orchestrator approval.
 
 ## Offline attendance invariants
 
