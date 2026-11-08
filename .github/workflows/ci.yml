@@ -31,3 +31,51 @@ jobs:
         run: flutter test
       - name: Build Android debug APK
         run: flutter build apk --debug
+      - name: Verify SQLCipher native libraries in APK
+        run: |
+          python3 - <<'PY'
+          import re
+          import subprocess
+          import tempfile
+          import zipfile
+
+          apk = "build/app/outputs/flutter-apk/app-debug.apk"
+          with zipfile.ZipFile(apk) as archive:
+              names = archive.namelist()
+              libraries = [
+                  name for name in names
+                  if name.startswith("lib/") and name.endswith("/libsqlcipher.so")
+              ]
+              if not libraries:
+                  raise SystemExit("SQLCipher libsqlcipher.so is missing from the APK")
+              if not any(name.startswith("lib/arm64-v8a/") for name in libraries):
+                  raise SystemExit("The Android arm64 SQLCipher library is missing")
+
+              for name in libraries:
+                  binary = archive.read(name)
+                  markers = (b"cipher_version", b"sqlite3_key", b"SQLCipher")
+                  if not any(marker in binary for marker in markers):
+                      raise SystemExit(f"{name} has no recognizable SQLCipher marker")
+
+                  with tempfile.NamedTemporaryFile() as target:
+                      target.write(binary)
+                      target.flush()
+                      result = subprocess.run(
+                          ["readelf", "-d", target.name],
+                          check=True, capture_output=True, text=True
+                      )
+                  needed = re.findall(r"Shared library: \[(.*?)\]", result.stdout)
+                  if any("libcrypto.so" in item for item in needed):
+                      bundled_crypto = any(
+                          item.startswith("lib/") and item.endswith("/libcrypto.so")
+                          for item in names
+                      )
+                      if not bundled_crypto:
+                          raise SystemExit(
+                              f"{name} requires libcrypto.so but the APK does not bundle it"
+                          )
+
+              print("Verified SQLCipher Android libraries:")
+              for name in libraries:
+                  print(f" - {name}")
+          PY
