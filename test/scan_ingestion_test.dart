@@ -286,11 +286,13 @@ void main() {
           scheduleMicrotask(() {
             activeStaff = 'staff-b';
             unawaited(
-              gateway.openForAccount('staff-b').then(
-                (_) => accountSwitch.complete(),
-                onError: (Object error, StackTrace stackTrace) =>
-                    accountSwitch.completeError(error, stackTrace),
-              ),
+              gateway
+                  .openForAccount('staff-b')
+                  .then(
+                    (_) => accountSwitch.complete(),
+                    onError: (Object error, StackTrace stackTrace) =>
+                        accountSwitch.completeError(error, stackTrace),
+                  ),
             );
           });
         }
