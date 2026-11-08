@@ -196,7 +196,7 @@ void main() {
     expect((await store.readRecent()).single.status, ScanStatus.blocked);
   });
 
-  test('account A cannot read or modify account B records', () async {
+  test('account isolation prevents reads and mutations', () async {
     final accountA = await store.createPending(
       eventId: 'event-a',
       checkpointId: 'checkpoint-a',
