@@ -66,10 +66,14 @@ final sampleCheckpoint = Checkpoint(
 );
 
 void main() {
-  testWidgets('missing build configuration displays setup instructions',
-      (tester) async {
+  testWidgets('missing build configuration displays setup instructions', (
+    tester,
+  ) async {
     await tester.pumpWidget(const HnuDashMobileApp());
-    expect(find.textContaining('Development configuration required'), findsOneWidget);
+    expect(
+      find.textContaining('Development configuration required'),
+      findsOneWidget,
+    );
   });
 
   testWidgets('signed-out state and Google login entry', (tester) async {
@@ -81,11 +85,15 @@ void main() {
     await tester.pump();
     gateway.setAccount('staff-a');
     await tester.pumpAndSettle();
-    expect(find.text('No assigned events are currently available.'), findsOneWidget);
+    expect(
+      find.text('No assigned events are currently available.'),
+      findsOneWidget,
+    );
   });
 
-  testWidgets('restored session lists assigned events and checkpoints',
-      (tester) async {
+  testWidgets('restored session lists assigned events and checkpoints', (
+    tester,
+  ) async {
     final gateway = FakeGateway('staff-a')
       ..assigned = [sampleEvent]
       ..configured = [sampleCheckpoint];
@@ -102,8 +110,9 @@ void main() {
     expect(find.text('Event state: OPEN'), findsOneWidget);
   });
 
-  testWidgets('revoked checkpoint access clears prior event information',
-      (tester) async {
+  testWidgets('revoked checkpoint access clears prior event information', (
+    tester,
+  ) async {
     final gateway = FakeGateway('staff-a')..assigned = [sampleEvent];
     addTearDown(gateway.close);
     await tester.pumpWidget(HnuDashMobileApp(gateway: gateway));
@@ -115,8 +124,9 @@ void main() {
     expect(find.textContaining('access could not be verified'), findsOneWidget);
   });
 
-  testWidgets('refresh drops stale assignments and errors can be retried',
-      (tester) async {
+  testWidgets('refresh drops stale assignments and errors can be retried', (
+    tester,
+  ) async {
     final gateway = FakeGateway('staff-a')..assigned = [sampleEvent];
     addTearDown(gateway.close);
     await tester.pumpWidget(HnuDashMobileApp(gateway: gateway));
@@ -132,11 +142,15 @@ void main() {
     gateway.fail = false;
     await tester.tap(find.text('Retry'));
     await tester.pumpAndSettle();
-    expect(find.text('No assigned events are currently available.'), findsOneWidget);
+    expect(
+      find.text('No assigned events are currently available.'),
+      findsOneWidget,
+    );
   });
 
-  testWidgets('session expiry and switch ignore previous account results',
-      (tester) async {
+  testWidgets('session expiry and switch ignore previous account results', (
+    tester,
+  ) async {
     final gateway = FakeGateway('staff-a')..assigned = [sampleEvent];
     addTearDown(gateway.close);
     await tester.pumpWidget(HnuDashMobileApp(gateway: gateway));
