@@ -275,6 +275,48 @@ void main() {
     },
   );
 
+  test('account switch during capture cannot redirect it to the next account', () async {
+    String? activeStaff = 'staff-a';
+    var staffIdReads = 0;
+    gateway = SupabaseStaffScanGateway.test(
+      currentStaffId: () {
+        staffIdReads++;
+        if (staffIdReads == 3) {
+          scheduleMicrotask(() {
+            activeStaff = 'staff-b';
+            unawaited(gateway.openForAccount('staff-b'));
+          });
+        }
+        return activeStaff;
+      },
+      ingest: (parameters) async {
+        requests.add(Map<String, dynamic>.from(parameters));
+        return receipt(parameters);
+      },
+      openStore: (staffId) => SecureAttendanceStore.open(
+        databasePath: databasePath,
+        legacyDatabasePath: legacyPath,
+        staffUserId: staffId,
+        keyStore: secrets,
+      ),
+    );
+
+    await gateway.openForAccount('staff-a');
+    await expectLater(
+      gateway.capture(
+        eventId: 'event-a',
+        checkpointId: 'checkpoint-a',
+        studentId: 'SYNTHETIC-00007',
+      ),
+      throwsStateError,
+    );
+    await Future<void>.delayed(Duration.zero);
+
+    expect(requests, isEmpty);
+    expect(await gateway.readRecent(), isEmpty);
+    expect(activeStaff, 'staff-b');
+  });
+
   test('retry cannot read another Staff account pending record', () async {
     await setupGateway(
       ingest: (_) async => throw TimeoutException('synthetic timeout'),
