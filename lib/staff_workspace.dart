@@ -239,10 +239,11 @@ class _StaffWorkspaceState extends State<StaffWorkspace>
     try {
       await widget.gateway.signIn();
     } catch (_) {
-      if (mounted)
+      if (mounted) {
         setState(
           () => _error = 'Google sign-in could not start. Check OAuth setup.',
         );
+      }
     } finally {
       if (mounted) setState(() => _busy = false);
     }
@@ -324,11 +325,7 @@ class _StaffWorkspaceState extends State<StaffWorkspace>
                   child: ListTile(
                     title: Text(event.title),
                     subtitle: Text(
-                      manilaTime(event.start) +
-                          ' – ' +
-                          manilaTime(event.end) +
-                          '\nState: ' +
-                          event.state,
+                      '${manilaTime(event.start)} – ${manilaTime(event.end)}\nState: ${event.state}',
                     ),
                     isThreeLine: true,
                     selected: _selected?.id == event.id,
@@ -337,21 +334,17 @@ class _StaffWorkspaceState extends State<StaffWorkspace>
                 ),
             if (signedIn && _selected != null && !_busy) ...[
               Text(
-                'Checkpoints — ' + _selected!.title,
+                'Checkpoints — ${_selected!.title}',
                 style: const TextStyle(fontSize: 20),
               ),
-              Text('Event state: ' + _selected!.state),
+              Text('Event state: ${_selected!.state}'),
               if (_checkpoints.isEmpty) const Text('No checkpoints available.'),
               for (final cp in _checkpoints)
                 Card(
                   child: ListTile(
                     title: Text(cp.label),
                     subtitle: Text(
-                      cp.direction +
-                          ' • ' +
-                          manilaTime(cp.start) +
-                          ' – ' +
-                          manilaTime(cp.end),
+                      '${cp.direction} • ${manilaTime(cp.start)} – ${manilaTime(cp.end)}',
                     ),
                   ),
                 ),
