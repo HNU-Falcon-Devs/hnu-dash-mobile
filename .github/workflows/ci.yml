@@ -21,6 +21,13 @@ jobs:
         run: flutter pub get
       - name: Check Dart formatting
         run: dart format --output=none --set-exit-if-changed .
+      - name: Diagnose Dart formatting differences
+        if: failure()
+        run: |
+          for file in lib/scan_ingestion.dart test/scan_ingestion_test.dart; do
+            dart format --output=show "$file" > /tmp/formatted.dart
+            diff -u "$file" /tmp/formatted.dart || true
+          done
       - name: Analyze
         run: flutter analyze
       - name: Install SQLite library for persistence tests
