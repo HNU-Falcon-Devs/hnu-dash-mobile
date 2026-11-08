@@ -12,6 +12,7 @@ dependencies:
   path: ^1.9.1
   sqflite: ^2.4.5
   uuid: ^4.6.0
+  supabase_flutter: ^2.18.3
 
 dev_dependencies:
   flutter_test:
