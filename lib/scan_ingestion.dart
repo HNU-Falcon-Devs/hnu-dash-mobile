@@ -292,7 +292,8 @@ class SupabaseStaffScanGateway implements StaffScanGateway {
       default:
         return ScanAttemptResult(
           record: record,
-          message: 'No authoritative receipt was confirmed. This attempt is saved as pending. Retry it manually using the same scan ID.',
+          message:
+              'No authoritative receipt was confirmed. This attempt is saved as pending. Retry it manually using the same scan ID.',
           retryAllowed: true,
         );
     }
