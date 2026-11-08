@@ -231,7 +231,7 @@ class SupabaseStaffScanGateway implements StaffScanGateway {
         );
       case '22023':
         try {
-          _store!.markBlocked(record.scanId);
+          await _store!.markBlocked(record.scanId);
         } catch (_) {
           // Preserve the pending record if the local state cannot be updated.
         }
