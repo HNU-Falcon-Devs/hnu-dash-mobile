@@ -151,7 +151,7 @@ class SupabaseStaffScanGateway implements StaffScanGateway {
   }
 
   Future<ScanAttemptResult> _submit(ScanRecord record) async {
-    _ensureCurrentAccount();
+    _ensureRecordAccount(record);
     try {
       final response = await _ingest({
         'p_scan_id': record.scanId,
@@ -159,7 +159,7 @@ class SupabaseStaffScanGateway implements StaffScanGateway {
         'p_checkpoint_id': record.checkpointId,
         'p_student_id': record.studentId,
       });
-      _ensureCurrentAccount();
+      _ensureRecordAccount(record);
       final receipt = _parseReceipt(response, record.scanId);
       await _store!.recordReceipt(
         scanId: record.scanId,
@@ -301,6 +301,18 @@ class SupabaseStaffScanGateway implements StaffScanGateway {
       case ScanStatus.blocked:
       case ScanStatus.legacy:
         throw StateError('A non-receipt status cannot be shown as a receipt.');
+    }
+  }
+
+  void _ensureRecordAccount(ScanRecord record) {
+    final owner = record.staffUserId;
+    if (owner == null ||
+        _store == null ||
+        _staffUserId != owner ||
+        _currentStaffId() != owner) {
+      throw StateError(
+        'The scan does not belong to the currently authenticated Staff account.',
+      );
     }
   }
 
