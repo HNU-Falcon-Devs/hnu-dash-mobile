@@ -278,13 +278,20 @@ void main() {
   test('account switch during capture cannot cross accounts', () async {
     String? activeStaff = 'staff-a';
     var staffIdReads = 0;
+    final accountSwitch = Completer<void>();
     gateway = SupabaseStaffScanGateway.test(
       currentStaffId: () {
         staffIdReads++;
         if (staffIdReads == 3) {
           scheduleMicrotask(() {
             activeStaff = 'staff-b';
-            unawaited(gateway.openForAccount('staff-b'));
+            unawaited(
+              gateway.openForAccount('staff-b').then(
+                (_) => accountSwitch.complete(),
+                onError: (Object error, StackTrace stackTrace) =>
+                    accountSwitch.completeError(error, stackTrace),
+              ),
+            );
           });
         }
         return activeStaff;
@@ -310,7 +317,7 @@ void main() {
       ),
       throwsStateError,
     );
-    await Future<void>.delayed(Duration.zero);
+    await accountSwitch.future;
 
     expect(requests, isEmpty);
     expect(await gateway.readRecent(), isEmpty);
