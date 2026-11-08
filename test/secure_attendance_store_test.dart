@@ -218,10 +218,7 @@ void main() {
       ),
       throwsStateError,
     );
-    await expectLater(
-      accountB.markBlocked(accountA.scanId),
-      throwsStateError,
-    );
+    await expectLater(accountB.markBlocked(accountA.scanId), throwsStateError);
     await accountB.close();
 
     store = await openStore(staffId: 'staff-a');
