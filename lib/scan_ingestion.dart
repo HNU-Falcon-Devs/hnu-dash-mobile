@@ -159,11 +159,7 @@ class SupabaseStaffScanGateway implements StaffScanGateway {
       );
     }
     _ensureRecordAccount(record, store, staffUserId);
-    return _submit(
-      record,
-      store: store,
-      staffUserId: staffUserId,
-    );
+    return _submit(record, store: store, staffUserId: staffUserId);
   }
 
   Future<ScanAttemptResult> _submit(
