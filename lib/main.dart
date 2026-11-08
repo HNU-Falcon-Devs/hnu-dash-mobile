@@ -11,11 +11,13 @@ Future<void> main() async {
   if (_url.isNotEmpty && _key.isNotEmpty) {
     await Supabase.initialize(url: _url, anonKey: _key);
   }
-  runApp(HnuDashMobileApp(
-    gateway: _url.isNotEmpty && _key.isNotEmpty
-        ? SupabaseStaffGateway(Supabase.instance.client)
-        : null,
-  ));
+  runApp(
+    HnuDashMobileApp(
+      gateway: _url.isNotEmpty && _key.isNotEmpty
+          ? SupabaseStaffGateway(Supabase.instance.client)
+          : null,
+    ),
+  );
 }
 
 class HnuDashMobileApp extends StatelessWidget {
