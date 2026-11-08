@@ -140,11 +140,7 @@ class SupabaseStaffScanGateway implements StaffScanGateway {
       studentId: studentId,
     );
     _ensureRecordAccount(record, store, staffUserId);
-    return _submit(
-      record,
-      store: store,
-      staffUserId: staffUserId,
-    );
+    return _submit(record, store: store, staffUserId: staffUserId);
   }
 
   @override
@@ -207,16 +203,11 @@ class SupabaseStaffScanGateway implements StaffScanGateway {
         retryAllowed: false,
       );
     } on PostgrestException catch (error) {
-      return await _handleBackendFailure(
-        record,
-        error.code,
-        store: store,
-      );
+      return await _handleBackendFailure(record, error.code, store: store);
     } catch (_) {
       return ScanAttemptResult(
         record: record,
-        message:
-            'No authoritative receipt was confirmed. This attempt is saved as pending. Retry it manually using the same scan ID.',
+        message: 'No authoritative receipt was confirmed. This attempt is saved as pending. Retry it manually using the same scan ID.',
         retryAllowed: true,
       );
     }
@@ -249,22 +240,19 @@ class SupabaseStaffScanGateway implements StaffScanGateway {
         );
         return ScanAttemptResult(
           record: blocked,
-          message:
-              'This scan ID conflicts with existing Backend evidence. Do not create a replacement scan; contact support.',
+          message: 'This scan ID conflicts with existing Backend evidence. Do not create a replacement scan; contact support.',
           retryAllowed: false,
         );
       case '42501':
         return ScanAttemptResult(
           record: record,
-          message:
-              'Access could not be verified. No receipt was confirmed. Sign in again or contact your event manager before retrying.',
+          message: 'Access could not be verified. No receipt was confirmed. Sign in again or contact your event manager before retrying.',
           retryAllowed: true,
         );
       case '55000':
         return ScanAttemptResult(
           record: record,
-          message:
-              'The event is not currently accepting new scans. No receipt was returned. Retry this same attempt only if the event is reopened.',
+          message: 'The event is not currently accepting new scans. No receipt was returned. Retry this same attempt only if the event is reopened.',
           retryAllowed: true,
         );
       case '22023':
@@ -278,22 +266,19 @@ class SupabaseStaffScanGateway implements StaffScanGateway {
             staffUserId: record.staffUserId,
             status: ScanStatus.blocked,
           ),
-          message:
-              'The Backend rejected this immutable scan payload. No receipt was returned. Do not create a replacement scan; contact support.',
+          message: 'The Backend rejected this immutable scan payload. No receipt was returned. Do not create a replacement scan; contact support.',
           retryAllowed: false,
         );
       case '40001':
         return ScanAttemptResult(
           record: record,
-          message:
-              'The Backend could not confirm durable receipt storage. This attempt remains pending; retry the same scan ID manually.',
+          message: 'The Backend could not confirm durable receipt storage. This attempt remains pending; retry the same scan ID manually.',
           retryAllowed: true,
         );
       default:
         return ScanAttemptResult(
           record: record,
-          message:
-              'No authoritative receipt was confirmed. This attempt is saved as pending. Retry it manually using the same scan ID.',
+          message: 'No authoritative receipt was confirmed. This attempt is saved as pending. Retry it manually using the same scan ID.',
           retryAllowed: true,
         );
     }
@@ -341,10 +326,7 @@ class SupabaseStaffScanGateway implements StaffScanGateway {
     }
   }
 
-  void _ensureBoundAccount(
-    SecureAttendanceStore store,
-    String staffUserId,
-  ) {
+  void _ensureBoundAccount(SecureAttendanceStore store, String staffUserId) {
     if (!identical(_store, store) ||
         _staffUserId != staffUserId ||
         _currentStaffId() != staffUserId) {
