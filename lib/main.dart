@@ -9,7 +9,7 @@ const _key = String.fromEnvironment('SUPABASE_PUBLISHABLE_KEY');
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
   if (_url.isNotEmpty && _key.isNotEmpty) {
-    await Supabase.initialize(url: _url, anonKey: _key);
+    await Supabase.initialize(url: _url, publishableKey: _key);
   }
   runApp(
     HnuDashMobileApp(
