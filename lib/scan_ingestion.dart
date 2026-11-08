@@ -183,7 +183,7 @@ class SupabaseStaffScanGateway implements StaffScanGateway {
         retryAllowed: false,
       );
     } on PostgrestException catch (error) {
-      return _handleBackendFailure(record, error.code);
+      return await _handleBackendFailure(record, error.code);
     } catch (_) {
       return ScanAttemptResult(
         record: record,
@@ -193,11 +193,14 @@ class SupabaseStaffScanGateway implements StaffScanGateway {
     }
   }
 
-  ScanAttemptResult _handleBackendFailure(ScanRecord record, String? code) {
+  Future<ScanAttemptResult> _handleBackendFailure(
+    ScanRecord record,
+    String? code,
+  ) async {
     switch (code) {
       case '23505':
         try {
-          _store!.markBlocked(record.scanId);
+          await _store!.markBlocked(record.scanId);
         } catch (_) {
           // Preserve the pending record if the local state cannot be updated.
         }
