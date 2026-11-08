@@ -275,10 +275,8 @@ void main() {
     },
   );
 
-  test(
-    'account switch during capture cannot redirect it to the next account',
-    () async {
-      String? activeStaff = 'staff-a';
+  test('account switch during capture cannot cross accounts', () async {
+    String? activeStaff = 'staff-a';
     var staffIdReads = 0;
     gateway = SupabaseStaffScanGateway.test(
       currentStaffId: () {
@@ -316,9 +314,8 @@ void main() {
 
     expect(requests, isEmpty);
     expect(await gateway.readRecent(), isEmpty);
-      expect(activeStaff, 'staff-b');
-    },
-  );
+    expect(activeStaff, 'staff-b');
+  });
 
   test('retry cannot read another Staff account pending record', () async {
     await setupGateway(
