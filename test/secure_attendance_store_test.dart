@@ -209,6 +209,19 @@ void main() {
     expect(await accountB.readPending(), isEmpty);
     expect(await accountB.hasUnresolvedRecords(), isFalse);
     expect(await accountB.findPending(accountA.scanId), isNull);
+    await expectLater(
+      accountB.recordReceipt(
+        scanId: accountA.scanId,
+        outcome: ScanStatus.accepted,
+        receivedAt: '2026-11-08T02:15:00Z',
+        replayed: false,
+      ),
+      throwsStateError,
+    );
+    await expectLater(
+      accountB.markBlocked(accountA.scanId),
+      throwsStateError,
+    );
     await accountB.close();
 
     store = await openStore(staffId: 'staff-a');
