@@ -118,7 +118,11 @@ class SupabaseStaffScanGateway implements StaffScanGateway {
     required String studentId,
   }) async {
     _ensureCurrentAccount();
-    if (await _store!.hasUnresolvedRecords()) {
+    final store = _store!;
+    final staffUserId = _staffUserId!;
+
+    if (await store.hasUnresolvedRecords()) {
+      _ensureBoundAccount(store, staffUserId);
       return const ScanAttemptResult(
         record: null,
         message:
@@ -127,18 +131,29 @@ class SupabaseStaffScanGateway implements StaffScanGateway {
       );
     }
 
-    final record = await _store!.createPending(
+    // Pin the account's store across awaits. An auth change must never redirect
+    // an in-flight capture into the next account's database.
+    _ensureBoundAccount(store, staffUserId);
+    final record = await store.createPending(
       eventId: eventId,
       checkpointId: checkpointId,
       studentId: studentId,
     );
-    return _submit(record);
+    _ensureRecordAccount(record, store, staffUserId);
+    return _submit(
+      record,
+      store: store,
+      staffUserId: staffUserId,
+    );
   }
 
   @override
   Future<ScanAttemptResult> retry(String scanId) async {
     _ensureCurrentAccount();
-    final record = await _store!.findPending(scanId);
+    final store = _store!;
+    final staffUserId = _staffUserId!;
+    final record = await store.findPending(scanId);
+    _ensureBoundAccount(store, staffUserId);
     if (record == null) {
       return const ScanAttemptResult(
         record: null,
@@ -147,11 +162,20 @@ class SupabaseStaffScanGateway implements StaffScanGateway {
         retryAllowed: false,
       );
     }
-    return _submit(record);
+    _ensureRecordAccount(record, store, staffUserId);
+    return _submit(
+      record,
+      store: store,
+      staffUserId: staffUserId,
+    );
   }
 
-  Future<ScanAttemptResult> _submit(ScanRecord record) async {
-    _ensureRecordAccount(record);
+  Future<ScanAttemptResult> _submit(
+    ScanRecord record, {
+    required SecureAttendanceStore store,
+    required String staffUserId,
+  }) async {
+    _ensureRecordAccount(record, store, staffUserId);
     try {
       final response = await _ingest({
         'p_scan_id': record.scanId,
@@ -159,9 +183,9 @@ class SupabaseStaffScanGateway implements StaffScanGateway {
         'p_checkpoint_id': record.checkpointId,
         'p_student_id': record.studentId,
       });
-      _ensureRecordAccount(record);
+      _ensureRecordAccount(record, store, staffUserId);
       final receipt = _parseReceipt(response, record.scanId);
-      await _store!.recordReceipt(
+      await store.recordReceipt(
         scanId: record.scanId,
         outcome: receipt.outcome,
         receivedAt: receipt.receivedAt,
@@ -183,7 +207,11 @@ class SupabaseStaffScanGateway implements StaffScanGateway {
         retryAllowed: false,
       );
     } on PostgrestException catch (error) {
-      return await _handleBackendFailure(record, error.code);
+      return await _handleBackendFailure(
+        record,
+        error.code,
+        store: store,
+      );
     } catch (_) {
       return ScanAttemptResult(
         record: record,
@@ -195,15 +223,21 @@ class SupabaseStaffScanGateway implements StaffScanGateway {
 
   Future<ScanAttemptResult> _handleBackendFailure(
     ScanRecord record,
-    String? code,
-  ) async {
+    String? code, {
+    required SecureAttendanceStore store,
+  }) async {
+    Future<void> markBlocked() async {
+      try {
+        await store.markBlocked(record.scanId);
+      } catch (_) {
+        // Preserve the pending record if the original account store is closed
+        // or the local state cannot be updated.
+      }
+    }
+
     switch (code) {
       case '23505':
-        try {
-          await _store!.markBlocked(record.scanId);
-        } catch (_) {
-          // Preserve the pending record if the local state cannot be updated.
-        }
+        await markBlocked();
         final blocked = ScanRecord(
           scanId: record.scanId,
           eventId: record.eventId,
@@ -230,11 +264,7 @@ class SupabaseStaffScanGateway implements StaffScanGateway {
           retryAllowed: true,
         );
       case '22023':
-        try {
-          await _store!.markBlocked(record.scanId);
-        } catch (_) {
-          // Preserve the pending record if the local state cannot be updated.
-        }
+        await markBlocked();
         return ScanAttemptResult(
           record: ScanRecord(
             scanId: record.scanId,
@@ -304,16 +334,28 @@ class SupabaseStaffScanGateway implements StaffScanGateway {
     }
   }
 
-  void _ensureRecordAccount(ScanRecord record) {
-    final owner = record.staffUserId;
-    if (owner == null ||
-        _store == null ||
-        _staffUserId != owner ||
-        _currentStaffId() != owner) {
+  void _ensureBoundAccount(
+    SecureAttendanceStore store,
+    String staffUserId,
+  ) {
+    if (!identical(_store, store) ||
+        _staffUserId != staffUserId ||
+        _currentStaffId() != staffUserId) {
+      throw StateError('The authenticated Staff account changed.');
+    }
+  }
+
+  void _ensureRecordAccount(
+    ScanRecord record,
+    SecureAttendanceStore store,
+    String staffUserId,
+  ) {
+    if (record.staffUserId != staffUserId) {
       throw StateError(
         'The scan does not belong to the currently authenticated Staff account.',
       );
     }
+    _ensureBoundAccount(store, staffUserId);
   }
 
   void _ensureCurrentAccount() {
