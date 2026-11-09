@@ -183,7 +183,7 @@ final sampleCheckpoint = Checkpoint(
 Widget buildApp(
   FakeGateway gateway, {
   FakeScanGateway? scanGateway,
-  String scannerStudentId = '00001234',
+  String scannerStudentId = '00000123456',
 }) => HnuDashMobileApp(
   gateway: gateway,
   scanGateway: scanGateway,
@@ -284,18 +284,44 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.text('Confirm attendance scan'), findsOneWidget);
-    expect(find.text('Student ID: ••••1234'), findsOneWidget);
+    expect(find.text('Student ID: ••••3456'), findsOneWidget);
     expect(scanGateway.captures, isEmpty);
 
     await tester.tap(find.text('Confirm scan'));
     await tester.pumpAndSettle();
 
     expect(scanGateway.captures, hasLength(1));
-    expect(scanGateway.captures.single['studentId'], '00001234');
+    expect(scanGateway.captures.single['studentId'], '00000123456');
     expect(scanGateway.captures.single['eventId'], 'event-1');
     expect(scanGateway.captures.single['checkpointId'], 'checkpoint-1');
     expect(find.textContaining('not finalized attendance'), findsOneWidget);
     expect(find.textContaining('ACCEPTED'), findsOneWidget);
+  });
+
+  testWidgets('injected non-synthetic scan never reaches the gateway', (
+    tester,
+  ) async {
+    final gateway = FakeGateway('staff-a')
+      ..assigned = [sampleEvent]
+      ..configured = [sampleCheckpoint];
+    final scanGateway = FakeScanGateway();
+    addTearDown(gateway.close);
+    await tester.pumpWidget(
+      buildApp(
+        gateway,
+        scanGateway: scanGateway,
+        scannerStudentId: '202611091234',
+      ),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('BSIT Assembly'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Entrance'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Scan Student ID'));
+    await tester.pumpAndSettle();
+    expect(find.text('Confirm attendance scan'), findsNothing);
+    expect(scanGateway.captures, isEmpty);
   });
 
   testWidgets('pending attempts block new scans and offer explicit retry', (
