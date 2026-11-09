@@ -1,6 +1,7 @@
 import 'package:flutter/foundation.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
+import 'development_scan_policy.dart';
 import 'secure_attendance_store.dart';
 import 'secure_value_store.dart';
 
@@ -30,9 +31,31 @@ abstract interface class StaffScanGateway {
 }
 
 typedef CurrentStaffId = String? Function();
+
+/// Immutable identity and bearer token captured for one RPC submission.
+class StaffScanSession {
+  const StaffScanSession({required this.staffUserId, required this.accessToken});
+
+  final String staffUserId;
+  final String accessToken;
+}
+
+typedef CurrentStaffSession = Future<StaffScanSession?> Function();
 typedef AttendanceScanRpc = Future<dynamic> Function(
   Map<String, dynamic> parameters,
+  String accessToken,
 );
+
+/// A per-request Authorization header is preserved by Supabase Dart 2.16.5's
+/// AuthHttpClient (putIfAbsent), even if its shared auth session changes while
+/// the request is preparing to send. No global client header is modified.
+Future<dynamic> submitPinnedAttendanceRpc(
+  SupabaseClient client,
+  Map<String, dynamic> parameters,
+  String accessToken,
+) => client
+    .rpc('ingest_attendance_scan', params: parameters)
+    .setHeader('Authorization', 'Bearer $accessToken');
 typedef AttendanceStoreOpener = Future<SecureAttendanceStore> Function(
   String staffUserId,
 );
@@ -43,8 +66,16 @@ class SupabaseStaffScanGateway implements StaffScanGateway {
     required SecureValueStore secureValues,
   }) : this._(
          currentStaffId: () => client.auth.currentUser?.id,
-         ingest: (parameters) =>
-             client.rpc('ingest_attendance_scan', params: parameters),
+         currentSession: () async {
+           final session = await client.auth.getSession();
+           if (session == null) return null;
+           return StaffScanSession(
+             staffUserId: session.user.id,
+             accessToken: session.accessToken,
+           );
+         },
+         ingest: (parameters, token) =>
+             submitPinnedAttendanceRpc(client, parameters, token),
          openStore: (staffUserId) => SecureAttendanceStore.openOnDevice(
            staffUserId: staffUserId,
            keyStore: secureValues,
@@ -54,21 +85,25 @@ class SupabaseStaffScanGateway implements StaffScanGateway {
   @visibleForTesting
   SupabaseStaffScanGateway.test({
     required CurrentStaffId currentStaffId,
+    required CurrentStaffSession currentSession,
     required AttendanceScanRpc ingest,
     required AttendanceStoreOpener openStore,
   }) : this._(
          currentStaffId: currentStaffId,
+         currentSession: currentSession,
          ingest: ingest,
          openStore: openStore,
        );
 
   SupabaseStaffScanGateway._({
     required this._currentStaffId,
+    required this._currentSession,
     required this._ingest,
     required this._openStore,
   });
 
   final CurrentStaffId _currentStaffId;
+  final CurrentStaffSession _currentSession;
   final AttendanceScanRpc _ingest;
   final AttendanceStoreOpener _openStore;
   SecureAttendanceStore? _store;
@@ -121,6 +156,14 @@ class SupabaseStaffScanGateway implements StaffScanGateway {
     final store = _store!;
     final staffUserId = _staffUserId!;
 
+    if (!isApprovedDevelopmentStudentId(studentId)) {
+      return const ScanAttemptResult(
+        record: null,
+        message: 'Development scanning accepts synthetic test IDs only.',
+        retryAllowed: false,
+      );
+    }
+
     if (await store.hasUnresolvedRecords()) {
       _ensureBoundAccount(store, staffUserId);
       return const ScanAttemptResult(
@@ -159,6 +202,13 @@ class SupabaseStaffScanGateway implements StaffScanGateway {
       );
     }
     _ensureRecordAccount(record, store, staffUserId);
+    if (!isApprovedDevelopmentStudentId(record.studentId)) {
+      return ScanAttemptResult(
+        record: record,
+        message: 'This saved attempt is not an approved synthetic test ID. It has been preserved for support and cannot be submitted.',
+        retryAllowed: false,
+      );
+    }
     return _submit(record, store: store, staffUserId: staffUserId);
   }
 
@@ -169,12 +219,24 @@ class SupabaseStaffScanGateway implements StaffScanGateway {
   }) async {
     _ensureRecordAccount(record, store, staffUserId);
     try {
+      // getSession refreshes an expired token if possible. Recheck the bound
+      // account after the await and require the returned session's own UUID.
+      final session = await _currentSession();
+      _ensureRecordAccount(record, store, staffUserId);
+      if (session == null ||
+          session.staffUserId != staffUserId ||
+          session.accessToken.isEmpty) {
+        throw StateError('The submission session does not match its owner.');
+      }
+
+      // The shared Supabase client's mutable session is NOT the request's
+      // authority. A pinned Authorization header sends this exact token.
       final response = await _ingest({
         'p_scan_id': record.scanId,
         'p_event_id': record.eventId,
         'p_checkpoint_id': record.checkpointId,
         'p_student_id': record.studentId,
-      });
+      }, session.accessToken);
       _ensureRecordAccount(record, store, staffUserId);
       final receipt = _parseReceipt(response, record.scanId);
       await store.recordReceipt(
@@ -199,15 +261,24 @@ class SupabaseStaffScanGateway implements StaffScanGateway {
         retryAllowed: false,
       );
     } on PostgrestException catch (error) {
+      // Ignore a late terminal error after sign-out or account switch: the
+      // original pending record must remain available to its owner.
+      try {
+        _ensureRecordAccount(record, store, staffUserId);
+      } catch (_) {
+        return _pendingResult(record);
+      }
       return await _handleBackendFailure(record, error.code, store: store);
     } catch (_) {
-      return ScanAttemptResult(
-        record: record,
-        message: 'No authoritative receipt was confirmed. This attempt is saved as pending. Retry it manually using the same scan ID.',
-        retryAllowed: true,
-      );
+      return _pendingResult(record);
     }
   }
+
+  ScanAttemptResult _pendingResult(ScanRecord record) => ScanAttemptResult(
+    record: record,
+    message: 'No authoritative receipt was confirmed. This attempt is saved as pending. Retry it manually using the same scan ID.',
+    retryAllowed: true,
+  );
 
   Future<ScanAttemptResult> _handleBackendFailure(
     ScanRecord record,
