@@ -40,16 +40,23 @@ jobs:
           import zipfile
 
           apk = "build/app/outputs/flutter-apk/app-debug.apk"
+          # flutter build apk --debug uses Flutter's default Android targets.
+          required_abis = ("armeabi-v7a", "arm64-v8a", "x86_64")
           with zipfile.ZipFile(apk) as archive:
-              names = archive.namelist()
-              libraries = [
+              names = set(archive.namelist())
+              libraries = sorted(
                   name for name in names
                   if name.startswith("lib/") and name.endswith("/libsqlcipher.so")
-              ]
+              )
               if not libraries:
                   raise SystemExit("SQLCipher libsqlcipher.so is missing from the APK")
-              if not any(name.startswith("lib/arm64-v8a/") for name in libraries):
-                  raise SystemExit("The Android arm64 SQLCipher library is missing")
+
+              for abi in required_abis:
+                  expected_library = f"lib/{abi}/libsqlcipher.so"
+                  if expected_library not in names:
+                      raise SystemExit(
+                          f"SQLCipher libsqlcipher.so is missing for required Android ABI {abi}"
+                      )
 
               for name in libraries:
                   binary = archive.read(name)
@@ -66,16 +73,23 @@ jobs:
                       )
                   needed = re.findall(r"Shared library: \[(.*?)\]", result.stdout)
                   if any("libcrypto.so" in item for item in needed):
-                      bundled_crypto = any(
-                          item.startswith("lib/") and item.endswith("/libcrypto.so")
-                          for item in names
-                      )
+                      abi_directory = name.rsplit("/", 1)[0]
+                      bundled_crypto = f"{abi_directory}/libcrypto.so" in names
                       if not bundled_crypto:
                           raise SystemExit(
-                              f"{name} requires libcrypto.so but the APK does not bundle it"
+                              f"{name} requires libcrypto.so but "
+                              f"{abi_directory}/libcrypto.so is not bundled"
                           )
 
-              print("Verified SQLCipher Android libraries:")
-              for name in libraries:
-                  print(f" - {name}")
+              print("Verified SQLCipher Android libraries for required ABIs:")
+              for abi in required_abis:
+                  print(f" - {abi}: lib/{abi}/libsqlcipher.so")
+              additional = sorted(
+                  set(libraries) -
+                  {f"lib/{abi}/libsqlcipher.so" for abi in required_abis}
+              )
+              if additional:
+                  print("Additional SQLCipher Android libraries:")
+                  for name in additional:
+                      print(f" - {name}")
           PY
