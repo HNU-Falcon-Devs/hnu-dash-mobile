@@ -117,7 +117,7 @@ void main() {
     final saved = await store.createPending(
       eventId: 'event-a',
       checkpointId: 'checkpoint-a',
-      studentId: '00001234',
+      studentId: '00000123456',
     );
     await store.close();
     store = await openStore();
@@ -125,7 +125,7 @@ void main() {
     final pending = await store.readPending();
     expect(pending, hasLength(1));
     expect(pending.single.scanId, saved.scanId);
-    expect(pending.single.studentId, '00001234');
+    expect(pending.single.studentId, '00000123456');
     expect(pending.single.eventId, 'event-a');
     expect(pending.single.checkpointId, 'checkpoint-a');
     expect(pending.single.staffUserId, 'staff-a');
@@ -137,17 +137,17 @@ void main() {
       final accepted = await store.createPending(
         eventId: 'event-a',
         checkpointId: 'checkpoint-a',
-        studentId: '00000001',
+        studentId: '00000123456',
       );
       final rejected = await store.createPending(
         eventId: 'event-a',
         checkpointId: 'checkpoint-b',
-        studentId: 'Student-AbC',
+        studentId: 'SYNTHETIC-AbC',
       );
       final duplicate = await store.createPending(
         eventId: 'event-b',
         checkpointId: 'checkpoint-c',
-        studentId: 'A-0003',
+        studentId: 'SYNTHETIC-A-0003',
       );
 
       const timestamp = '2026-11-08T02:15:00.123Z';
@@ -178,7 +178,7 @@ void main() {
       ]);
       expect(records.first.replayed, isTrue);
       expect(records.first.receivedAt, timestamp);
-      expect(records.last.studentId, '00000001');
+      expect(records.last.studentId, '00000123456');
       expect(await store.readPending(), isEmpty);
       expect(await store.hasUnresolvedRecords(), isFalse);
     },
@@ -192,8 +192,52 @@ void main() {
     );
     await store.markBlocked(saved.scanId);
     expect(await store.findPending(saved.scanId), isNull);
-    expect(await store.hasUnresolvedRecords(), isTrue);
+    expect(await store.hasUnresolvedRecords(), isFalse);
     expect((await store.readRecent()).single.status, ScanStatus.blocked);
+  });
+
+  test('terminal conflict blocks same payload but not independent work', () async {
+    final blocked = await store.createPending(
+      eventId: 'event-a',
+      checkpointId: 'checkpoint-a',
+      studentId: 'SYNTHETIC-00004',
+    );
+    await store.markBlocked(blocked.scanId);
+    await expectLater(
+      store.createPending(
+        eventId: 'event-a',
+        checkpointId: 'checkpoint-a',
+        studentId: 'SYNTHETIC-00004',
+      ),
+      throwsStateError,
+    );
+    expect((await store.readRecent()).single.scanId, blocked.scanId);
+    expect(await store.hasUnresolvedRecords(), isFalse);
+
+    final independent = await store.createPending(
+      eventId: 'event-a',
+      checkpointId: 'checkpoint-a',
+      studentId: 'SYNTHETIC-00005',
+    );
+    expect(independent.status, ScanStatus.pending);
+    expect(await store.hasUnresolvedRecords(), isTrue);
+    expect(await store.findPending(blocked.scanId), isNull);
+    expect((await store.readPending()).single.scanId, independent.scanId);
+    expect((await store.readRecent()).first.scanId, independent.scanId);
+  });
+
+  test('non-synthetic IDs cannot reach encrypted pending storage', () async {
+    for (final value in ['00012345', 'HNU-2026-123']) {
+      await expectLater(
+        store.createPending(
+          eventId: 'event-a',
+          checkpointId: 'checkpoint-a',
+          studentId: value,
+        ),
+        throwsArgumentError,
+      );
+    }
+    expect(await store.readRecent(), isEmpty);
   });
 
   test('account isolation prevents reads and mutations', () async {
