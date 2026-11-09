@@ -19,6 +19,7 @@ dependencies:
   supabase_flutter: ^2.18.3
 
 dev_dependencies:
+  http: ^1.6.0 # HTTP transport assertions for pinned RPC authentication.
   flutter_test:
     sdk: flutter
   flutter_lints: ^6.0.0
