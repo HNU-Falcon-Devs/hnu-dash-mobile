@@ -31,3 +31,65 @@ jobs:
         run: flutter test
       - name: Build Android debug APK
         run: flutter build apk --debug
+      - name: Verify SQLCipher native libraries in APK
+        run: |
+          python3 - <<'PY'
+          import re
+          import subprocess
+          import tempfile
+          import zipfile
+
+          apk = "build/app/outputs/flutter-apk/app-debug.apk"
+          # flutter build apk --debug uses Flutter's default Android targets.
+          required_abis = ("armeabi-v7a", "arm64-v8a", "x86_64")
+          with zipfile.ZipFile(apk) as archive:
+              names = set(archive.namelist())
+              libraries = sorted(
+                  name for name in names
+                  if name.startswith("lib/") and name.endswith("/libsqlcipher.so")
+              )
+              if not libraries:
+                  raise SystemExit("SQLCipher libsqlcipher.so is missing from the APK")
+
+              for abi in required_abis:
+                  expected_library = f"lib/{abi}/libsqlcipher.so"
+                  if expected_library not in names:
+                      raise SystemExit(
+                          f"SQLCipher libsqlcipher.so is missing for required Android ABI {abi}"
+                      )
+
+              for name in libraries:
+                  binary = archive.read(name)
+                  markers = (b"cipher_version", b"sqlite3_key", b"SQLCipher")
+                  if not any(marker in binary for marker in markers):
+                      raise SystemExit(f"{name} has no recognizable SQLCipher marker")
+
+                  with tempfile.NamedTemporaryFile() as target:
+                      target.write(binary)
+                      target.flush()
+                      result = subprocess.run(
+                          ["readelf", "-d", target.name],
+                          check=True, capture_output=True, text=True
+                      )
+                  needed = re.findall(r"Shared library: \[(.*?)\]", result.stdout)
+                  if any("libcrypto.so" in item for item in needed):
+                      abi_directory = name.rsplit("/", 1)[0]
+                      bundled_crypto = f"{abi_directory}/libcrypto.so" in names
+                      if not bundled_crypto:
+                          raise SystemExit(
+                              f"{name} requires libcrypto.so but "
+                              f"{abi_directory}/libcrypto.so is not bundled"
+                          )
+
+              print("Verified SQLCipher Android libraries for required ABIs:")
+              for abi in required_abis:
+                  print(f" - {abi}: lib/{abi}/libsqlcipher.so")
+              additional = sorted(
+                  set(libraries) -
+                  {f"lib/{abi}/libsqlcipher.so" for abi in required_abis}
+              )
+              if additional:
+                  print("Additional SQLCipher Android libraries:")
+                  for name in additional:
+                      print(f" - {name}")
+          PY
