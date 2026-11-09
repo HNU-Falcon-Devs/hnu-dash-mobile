@@ -196,35 +196,38 @@ void main() {
     expect((await store.readRecent()).single.status, ScanStatus.blocked);
   });
 
-  test('terminal conflict blocks same payload but not independent work', () async {
-    final blocked = await store.createPending(
-      eventId: 'event-a',
-      checkpointId: 'checkpoint-a',
-      studentId: 'SYNTHETIC-00004',
-    );
-    await store.markBlocked(blocked.scanId);
-    await expectLater(
-      store.createPending(
+  test(
+    'terminal conflict blocks same payload but not independent work',
+    () async {
+      final blocked = await store.createPending(
         eventId: 'event-a',
         checkpointId: 'checkpoint-a',
         studentId: 'SYNTHETIC-00004',
-      ),
-      throwsStateError,
-    );
-    expect((await store.readRecent()).single.scanId, blocked.scanId);
-    expect(await store.hasUnresolvedRecords(), isFalse);
+      );
+      await store.markBlocked(blocked.scanId);
+      await expectLater(
+        store.createPending(
+          eventId: 'event-a',
+          checkpointId: 'checkpoint-a',
+          studentId: 'SYNTHETIC-00004',
+        ),
+        throwsStateError,
+      );
+      expect((await store.readRecent()).single.scanId, blocked.scanId);
+      expect(await store.hasUnresolvedRecords(), isFalse);
 
-    final independent = await store.createPending(
-      eventId: 'event-a',
-      checkpointId: 'checkpoint-a',
-      studentId: 'SYNTHETIC-00005',
-    );
-    expect(independent.status, ScanStatus.pending);
-    expect(await store.hasUnresolvedRecords(), isTrue);
-    expect(await store.findPending(blocked.scanId), isNull);
-    expect((await store.readPending()).single.scanId, independent.scanId);
-    expect((await store.readRecent()).first.scanId, independent.scanId);
-  });
+      final independent = await store.createPending(
+        eventId: 'event-a',
+        checkpointId: 'checkpoint-a',
+        studentId: 'SYNTHETIC-00005',
+      );
+      expect(independent.status, ScanStatus.pending);
+      expect(await store.hasUnresolvedRecords(), isTrue);
+      expect(await store.findPending(blocked.scanId), isNull);
+      expect((await store.readPending()).single.scanId, independent.scanId);
+      expect((await store.readRecent()).first.scanId, independent.scanId);
+    },
+  );
 
   test('non-synthetic IDs cannot reach encrypted pending storage', () async {
     for (final value in ['00012345', 'HNU-2026-123']) {
