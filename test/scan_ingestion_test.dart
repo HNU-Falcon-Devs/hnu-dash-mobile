@@ -34,14 +34,22 @@ void main() {
   late SecureAttendanceStore openedStore;
   late SupabaseStaffScanGateway gateway;
   late List<Map<String, dynamic>> requests;
+  late List<String> authorizationTokens;
 
   Future<void> setupGateway({
     required Future<dynamic> Function(Map<String, dynamic>) ingest,
   }) async {
     gateway = SupabaseStaffScanGateway.test(
       currentStaffId: () => currentStaffId,
-      ingest: (parameters) {
+      currentSession: () async => currentStaffId == null
+          ? null
+          : StaffScanSession(
+              staffUserId: currentStaffId!,
+              accessToken: 'token-${currentStaffId!}',
+            ),
+      ingest: (parameters, token) {
         requests.add(Map<String, dynamic>.from(parameters));
+        authorizationTokens.add(token);
         return ingest(parameters);
       },
       openStore: (staffId) async {
@@ -76,6 +84,7 @@ void main() {
     secrets = MemorySecureValueStore();
     currentStaffId = 'staff-a';
     requests = [];
+    authorizationTokens = [];
   });
 
   tearDown(() async {
@@ -90,7 +99,7 @@ void main() {
       final result = await gateway.capture(
         eventId: 'event-a',
         checkpointId: 'checkpoint-a',
-        studentId: '00001234',
+        studentId: '00000123456',
       );
 
       expect(requests, hasLength(1));
@@ -102,7 +111,7 @@ void main() {
       });
       expect(requests.single['p_event_id'], 'event-a');
       expect(requests.single['p_checkpoint_id'], 'checkpoint-a');
-      expect(requests.single['p_student_id'], '00001234');
+      expect(requests.single['p_student_id'], '00000123456');
       expect(result.record?.status, ScanStatus.accepted);
       expect(result.message, contains('not finalized attendance'));
       final saved = await openedStore.readRecent();
@@ -156,7 +165,7 @@ void main() {
       final initial = await gateway.capture(
         eventId: 'event-a',
         checkpointId: 'checkpoint-a',
-        studentId: '00009876',
+        studentId: '00000123456',
       );
       expect(initial.record?.status, ScanStatus.pending);
       expect(initial.message, contains('same scan ID'));
@@ -218,7 +227,7 @@ void main() {
       expect(result.record?.status, expectedStatus);
       expect(result.retryAllowed, code != '22023');
       expect(result.message, isNot(contains('synthetic internal error')));
-      expect(await openedStore.hasUnresolvedRecords(), isTrue);
+      expect(await openedStore.hasUnresolvedRecords(), code != '22023');
     }
   });
 
@@ -236,7 +245,7 @@ void main() {
     );
     expect(result.record?.status, ScanStatus.blocked);
     expect(result.retryAllowed, isFalse);
-    expect(await openedStore.hasUnresolvedRecords(), isTrue);
+    expect(await openedStore.hasUnresolvedRecords(), isFalse);
     expect(await openedStore.findPending(result.record!.scanId), isNull);
   });
 
@@ -298,8 +307,15 @@ void main() {
         }
         return activeStaff;
       },
-      ingest: (parameters) async {
+      currentSession: () async => activeStaff == null
+          ? null
+          : StaffScanSession(
+              staffUserId: activeStaff!,
+              accessToken: 'token-${activeStaff!}',
+            ),
+      ingest: (parameters, token) async {
         requests.add(Map<String, dynamic>.from(parameters));
+        authorizationTokens.add(token);
         return receipt(parameters);
       },
       openStore: (staffId) => SecureAttendanceStore.open(
@@ -324,6 +340,195 @@ void main() {
     expect(requests, isEmpty);
     expect(await gateway.readRecent(), isEmpty);
     expect(activeStaff, 'staff-b');
+  });
+
+  test('synthetic roster ID is allowed with leading zeros', () async {
+    await setupGateway(ingest: (request) async => receipt(request));
+    final result = await gateway.capture(
+      eventId: 'event-a',
+      checkpointId: 'checkpoint-a',
+      studentId: '00000123456',
+    );
+    expect(result.record?.studentId, '00000123456');
+    expect(requests.single['p_student_id'], '00000123456');
+    expect(authorizationTokens, ['token-staff-a']);
+  });
+
+  test('non-synthetic valid IDs are rejected before storage or RPC', () async {
+    await setupGateway(ingest: (request) async => receipt(request));
+    for (final value in ['00012345', '202611091234', 'HNU-2026-123']) {
+      final result = await gateway.capture(
+        eventId: 'event-a',
+        checkpointId: 'checkpoint-a',
+        studentId: value,
+      );
+      expect(result.record, isNull);
+      expect(result.retryAllowed, isFalse);
+      expect(result.message, isNot(contains(value)));
+    }
+    expect(await openedStore.readRecent(), isEmpty);
+    expect(requests, isEmpty);
+    expect(authorizationTokens, isEmpty);
+  });
+
+  test('capture aborts when the session belongs to another Staff', () async {
+    gateway = SupabaseStaffScanGateway.test(
+      currentStaffId: () => 'staff-a',
+      currentSession: () async => const StaffScanSession(
+        staffUserId: 'staff-b',
+        accessToken: 'token-staff-b',
+      ),
+      ingest: (parameters, token) async {
+        requests.add(Map<String, dynamic>.from(parameters));
+        authorizationTokens.add(token);
+        return receipt(parameters);
+      },
+      openStore: (staffId) async {
+        openedStore = await SecureAttendanceStore.open(
+          databasePath: databasePath,
+          legacyDatabasePath: legacyPath,
+          staffUserId: staffId,
+          keyStore: secrets,
+        );
+        return openedStore;
+      },
+    );
+    await gateway.openForAccount('staff-a');
+    final result = await gateway.capture(
+      eventId: 'event-a',
+      checkpointId: 'checkpoint-a',
+      studentId: '00000123456',
+    );
+    expect(result.record?.status, ScanStatus.pending);
+    expect((await openedStore.readPending()).single.scanId, result.record!.scanId);
+    expect(requests, isEmpty);
+    expect(authorizationTokens, isEmpty);
+  });
+
+  test('in-flight capture keeps the original bearer and pending evidence', () async {
+    final inFlight = Completer<dynamic>();
+    final sent = Completer<void>();
+    await setupGateway(ingest: (request) {
+      sent.complete();
+      return inFlight.future;
+    });
+    final operation = gateway.capture(
+      eventId: 'event-a',
+      checkpointId: 'checkpoint-a',
+      studentId: '00000123456',
+    );
+    await sent.future;
+    final scanId = requests.single['p_scan_id'];
+    expect(authorizationTokens, ['token-staff-a']);
+    currentStaffId = 'staff-b';
+    inFlight.complete(receipt(requests.single));
+    final result = await operation;
+    expect(result.record?.status, ScanStatus.pending);
+    expect(result.record?.scanId, scanId);
+    expect((await openedStore.readPending()).single.scanId, scanId);
+    expect(await openedStore.findPending(scanId), isNotNull);
+  });
+
+  test('account change before retry never submits as the next account', () async {
+    await setupGateway(
+      ingest: (_) async => throw TimeoutException('synthetic timeout'),
+    );
+    final initial = await gateway.capture(
+      eventId: 'event-a',
+      checkpointId: 'checkpoint-a',
+      studentId: '00000123456',
+    );
+    currentStaffId = 'staff-b';
+    await expectLater(gateway.retry(initial.record!.scanId), throwsStateError);
+    expect(authorizationTokens, ['token-staff-a']);
+    expect((await openedStore.readPending()).single.scanId, initial.record!.scanId);
+  });
+
+  test('in-flight retry preserves the original Staff identity', () async {
+    final inFlight = Completer<dynamic>();
+    final retrySent = Completer<void>();
+    var callCount = 0;
+    await setupGateway(ingest: (request) {
+      callCount++;
+      if (callCount == 1) throw TimeoutException('synthetic timeout');
+      retrySent.complete();
+      return inFlight.future;
+    });
+    final first = await gateway.capture(
+      eventId: 'event-a',
+      checkpointId: 'checkpoint-a',
+      studentId: '00000123456',
+    );
+    final retry = gateway.retry(first.record!.scanId);
+    await retrySent.future;
+    currentStaffId = 'staff-b';
+    inFlight.complete(receipt(requests.last, replayed: true));
+    final result = await retry;
+    expect(result.record?.status, ScanStatus.pending);
+    expect(requests, hasLength(2));
+    expect(requests.first, requests.last);
+    expect(authorizationTokens, ['token-staff-a', 'token-staff-a']);
+    expect((await openedStore.readPending()).single.scanId, first.record!.scanId);
+  });
+
+  test('sign-out in-flight leaves a pending record with no receipt', () async {
+    final inFlight = Completer<dynamic>();
+    final sent = Completer<void>();
+    await setupGateway(ingest: (request) {
+      sent.complete();
+      return inFlight.future;
+    });
+    final operation = gateway.capture(
+      eventId: 'event-a',
+      checkpointId: 'checkpoint-a',
+      studentId: '00000123456',
+    );
+    await sent.future;
+    currentStaffId = null;
+    inFlight.complete(receipt(requests.single));
+    final result = await operation;
+    expect(result.record?.status, ScanStatus.pending);
+    expect(authorizationTokens, ['token-staff-a']);
+    expect((await openedStore.readPending()).single.scanId, result.record!.scanId);
+  });
+
+  test('terminal blocked evidence permits only unrelated captures', () async {
+    var count = 0;
+    await setupGateway(ingest: (request) async {
+      count++;
+      if (count == 1) {
+        throw PostgrestException(
+          message: 'synthetic conflict',
+          code: '23505',
+        );
+      }
+      return receipt(request);
+    });
+    final blocked = await gateway.capture(
+      eventId: 'event-a',
+      checkpointId: 'checkpoint-a',
+      studentId: 'SYNTHETIC-00003',
+    );
+    expect(blocked.record?.status, ScanStatus.blocked);
+    expect(await gateway.hasUnresolvedRecords(), isFalse);
+    await expectLater(
+      gateway.capture(
+        eventId: 'event-a',
+        checkpointId: 'checkpoint-a',
+        studentId: 'SYNTHETIC-00003',
+      ),
+      throwsStateError,
+    );
+    final next = await gateway.capture(
+      eventId: 'event-a',
+      checkpointId: 'checkpoint-a',
+      studentId: 'SYNTHETIC-00004',
+    );
+    expect(next.record?.status, ScanStatus.accepted);
+    expect(requests, hasLength(2));
+    final records = await openedStore.readRecent();
+    expect(records.map((item) => item.scanId), contains(blocked.record!.scanId));
+    expect((await openedStore.readRecent()).first.status, ScanStatus.blocked);
   });
 
   test('retry cannot read another Staff account pending record', () async {
