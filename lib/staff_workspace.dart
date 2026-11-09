@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
+import 'development_scan_policy.dart';
 import 'scan_ingestion.dart';
 import 'secure_attendance_store.dart';
 import 'student_qr_scanner.dart';
@@ -378,7 +379,7 @@ class _StaffWorkspaceState extends State<StaffWorkspace>
     if (studentId == null ||
         !mounted ||
         !_validScanAccount(account) ||
-        canonicalStudentId(studentId) == null) {
+        !isApprovedDevelopmentStudentId(studentId)) {
       return;
     }
 
@@ -525,7 +526,11 @@ class _StaffWorkspaceState extends State<StaffWorkspace>
 
   Widget _scanRecordCard(ScanRecord record) {
     final receipt = record.receivedAt;
-    final subtitle = receipt == null
+    final subtitle = record.status == ScanStatus.blocked
+        ? 'Student ID: ${maskStudentId(record.studentId)}\n'
+              'Terminal conflict — no retry. Contact support with scan UUID '
+              '${record.scanId}. Original evidence is preserved.'
+        : receipt == null
         ? 'Student ID: ${maskStudentId(record.studentId)}\nNo authoritative receipt is stored.'
         : 'Student ID: ${maskStudentId(record.studentId)}\n'
               'Backend received: ${manilaTime(DateTime.parse(receipt))}'
@@ -677,7 +682,7 @@ class _StaffWorkspaceState extends State<StaffWorkspace>
               const Text('Opening encrypted attendance storage…'),
             if (signedIn && _hasUnresolvedScans)
               const Text(
-                'Resolve the existing pending or blocked attempt before scanning another ID.',
+                'Retry the pending attempt before scanning another ID. Blocked conflicts remain saved for support; only unrelated captures may continue.',
               ),
             if (signedIn && _scanBusy) const LinearProgressIndicator(),
             if (signedIn && _scanMessage != null)
