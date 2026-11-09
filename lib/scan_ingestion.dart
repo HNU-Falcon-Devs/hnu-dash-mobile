@@ -34,7 +34,10 @@ typedef CurrentStaffId = String? Function();
 
 /// Immutable identity and bearer token captured for one RPC submission.
 class StaffScanSession {
-  const StaffScanSession({required this.staffUserId, required this.accessToken});
+  const StaffScanSession({
+    required this.staffUserId,
+    required this.accessToken,
+  });
 
   final String staffUserId;
   final String accessToken;
