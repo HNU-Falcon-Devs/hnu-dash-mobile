@@ -400,60 +400,79 @@ void main() {
       studentId: '00000123456',
     );
     expect(result.record?.status, ScanStatus.pending);
-    expect((await openedStore.readPending()).single.scanId, result.record!.scanId);
+    expect(
+      (await openedStore.readPending()).single.scanId,
+      result.record!.scanId,
+    );
     expect(requests, isEmpty);
     expect(authorizationTokens, isEmpty);
   });
 
-  test('in-flight capture keeps the original bearer and pending evidence', () async {
-    final inFlight = Completer<dynamic>();
-    final sent = Completer<void>();
-    await setupGateway(ingest: (request) {
-      sent.complete();
-      return inFlight.future;
-    });
-    final operation = gateway.capture(
-      eventId: 'event-a',
-      checkpointId: 'checkpoint-a',
-      studentId: '00000123456',
-    );
-    await sent.future;
-    final scanId = requests.single['p_scan_id'];
-    expect(authorizationTokens, ['token-staff-a']);
-    currentStaffId = 'staff-b';
-    inFlight.complete(receipt(requests.single));
-    final result = await operation;
-    expect(result.record?.status, ScanStatus.pending);
-    expect(result.record?.scanId, scanId);
-    expect((await openedStore.readPending()).single.scanId, scanId);
-    expect(await openedStore.findPending(scanId), isNotNull);
-  });
+  test(
+    'in-flight capture keeps the original bearer and pending evidence',
+    () async {
+      final inFlight = Completer<dynamic>();
+      final sent = Completer<void>();
+      await setupGateway(
+        ingest: (request) {
+          sent.complete();
+          return inFlight.future;
+        },
+      );
+      final operation = gateway.capture(
+        eventId: 'event-a',
+        checkpointId: 'checkpoint-a',
+        studentId: '00000123456',
+      );
+      await sent.future;
+      final scanId = requests.single['p_scan_id'];
+      expect(authorizationTokens, ['token-staff-a']);
+      currentStaffId = 'staff-b';
+      inFlight.complete(receipt(requests.single));
+      final result = await operation;
+      expect(result.record?.status, ScanStatus.pending);
+      expect(result.record?.scanId, scanId);
+      expect((await openedStore.readPending()).single.scanId, scanId);
+      expect(await openedStore.findPending(scanId), isNotNull);
+    },
+  );
 
-  test('account change before retry never submits as the next account', () async {
-    await setupGateway(
-      ingest: (_) async => throw TimeoutException('synthetic timeout'),
-    );
-    final initial = await gateway.capture(
-      eventId: 'event-a',
-      checkpointId: 'checkpoint-a',
-      studentId: '00000123456',
-    );
-    currentStaffId = 'staff-b';
-    await expectLater(gateway.retry(initial.record!.scanId), throwsStateError);
-    expect(authorizationTokens, ['token-staff-a']);
-    expect((await openedStore.readPending()).single.scanId, initial.record!.scanId);
-  });
+  test(
+    'account change before retry never submits as the next account',
+    () async {
+      await setupGateway(
+        ingest: (_) async => throw TimeoutException('synthetic timeout'),
+      );
+      final initial = await gateway.capture(
+        eventId: 'event-a',
+        checkpointId: 'checkpoint-a',
+        studentId: '00000123456',
+      );
+      currentStaffId = 'staff-b';
+      await expectLater(
+        gateway.retry(initial.record!.scanId),
+        throwsStateError,
+      );
+      expect(authorizationTokens, ['token-staff-a']);
+      expect(
+        (await openedStore.readPending()).single.scanId,
+        initial.record!.scanId,
+      );
+    },
+  );
 
   test('in-flight retry preserves the original Staff identity', () async {
     final inFlight = Completer<dynamic>();
     final retrySent = Completer<void>();
     var callCount = 0;
-    await setupGateway(ingest: (request) {
-      callCount++;
-      if (callCount == 1) throw TimeoutException('synthetic timeout');
-      retrySent.complete();
-      return inFlight.future;
-    });
+    await setupGateway(
+      ingest: (request) {
+        callCount++;
+        if (callCount == 1) throw TimeoutException('synthetic timeout');
+        retrySent.complete();
+        return inFlight.future;
+      },
+    );
     final first = await gateway.capture(
       eventId: 'event-a',
       checkpointId: 'checkpoint-a',
@@ -468,16 +487,21 @@ void main() {
     expect(requests, hasLength(2));
     expect(requests.first, requests.last);
     expect(authorizationTokens, ['token-staff-a', 'token-staff-a']);
-    expect((await openedStore.readPending()).single.scanId, first.record!.scanId);
+    expect(
+      (await openedStore.readPending()).single.scanId,
+      first.record!.scanId,
+    );
   });
 
   test('sign-out in-flight leaves a pending record with no receipt', () async {
     final inFlight = Completer<dynamic>();
     final sent = Completer<void>();
-    await setupGateway(ingest: (request) {
-      sent.complete();
-      return inFlight.future;
-    });
+    await setupGateway(
+      ingest: (request) {
+        sent.complete();
+        return inFlight.future;
+      },
+    );
     final operation = gateway.capture(
       eventId: 'event-a',
       checkpointId: 'checkpoint-a',
@@ -489,21 +513,26 @@ void main() {
     final result = await operation;
     expect(result.record?.status, ScanStatus.pending);
     expect(authorizationTokens, ['token-staff-a']);
-    expect((await openedStore.readPending()).single.scanId, result.record!.scanId);
+    expect(
+      (await openedStore.readPending()).single.scanId,
+      result.record!.scanId,
+    );
   });
 
   test('terminal blocked evidence permits only unrelated captures', () async {
     var count = 0;
-    await setupGateway(ingest: (request) async {
-      count++;
-      if (count == 1) {
-        throw PostgrestException(
-          message: 'synthetic conflict',
-          code: '23505',
-        );
-      }
-      return receipt(request);
-    });
+    await setupGateway(
+      ingest: (request) async {
+        count++;
+        if (count == 1) {
+          throw PostgrestException(
+            message: 'synthetic conflict',
+            code: '23505',
+          );
+        }
+        return receipt(request);
+      },
+    );
     final blocked = await gateway.capture(
       eventId: 'event-a',
       checkpointId: 'checkpoint-a',
@@ -527,7 +556,10 @@ void main() {
     expect(next.record?.status, ScanStatus.accepted);
     expect(requests, hasLength(2));
     final records = await openedStore.readRecent();
-    expect(records.map((item) => item.scanId), contains(blocked.record!.scanId));
+    expect(
+      records.map((item) => item.scanId),
+      contains(blocked.record!.scanId),
+    );
     expect((await openedStore.readRecent()).first.status, ScanStatus.blocked);
   });
 
