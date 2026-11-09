@@ -29,6 +29,7 @@ void main() {
           }),
           200,
           headers: {'content-type': 'application/json'},
+          request: request,
         );
       });
       final client = SupabaseClient(
