@@ -45,8 +45,8 @@ void main() {
                     scannerBuilder: (context, onValue, onProblem) =>
                         FilledButton(
                           onPressed: () {
-                            onValue('00001234');
-                            onValue('00001234');
+                            onValue('00000123456');
+                            onValue('00000123456');
                           },
                           child: const Text('Emit QR twice'),
                         ),
@@ -65,7 +65,7 @@ void main() {
     await tester.tap(find.text('Emit QR twice'));
     await tester.pumpAndSettle();
 
-    expect(result, '00001234');
+    expect(result, '00000123456');
   });
 
   testWidgets('invalid QR stays in scanner and displays a safe error', (
@@ -90,6 +90,28 @@ void main() {
       findsOneWidget,
     );
     expect(find.textContaining('example.test'), findsNothing);
+  });
+
+  testWidgets('canonical but real-looking QR cannot leave the scanner', (
+    tester,
+  ) async {
+    await tester.pumpWidget(
+      MaterialApp(
+        home: StudentQrScannerPage(
+          scannerBuilder: (context, onValue, onProblem) => FilledButton(
+            onPressed: () => onValue('202611091234'),
+            child: const Text('Emit non-synthetic QR'),
+          ),
+        ),
+      ),
+    );
+    await tester.tap(find.text('Emit non-synthetic QR'));
+    await tester.pumpAndSettle();
+    expect(
+      find.text('Development scanning accepts synthetic test IDs only.'),
+      findsOneWidget,
+    );
+    expect(find.textContaining('202611091234'), findsNothing);
   });
 
   testWidgets('camera permission denial offers settings and retry', (
