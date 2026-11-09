@@ -4,6 +4,8 @@ import 'package:flutter/material.dart';
 import 'package:mobile_scanner/mobile_scanner.dart';
 import 'package:permission_handler/permission_handler.dart';
 
+import 'development_scan_policy.dart';
+
 enum ScannerProblem { permissionDenied, unavailable }
 
 typedef ScannerSurfaceBuilder = Widget Function(
@@ -13,7 +15,7 @@ typedef ScannerSurfaceBuilder = Widget Function(
 );
 
 String? canonicalStudentId(String? value) {
-  if (value == null || !RegExp(r'^[A-Za-z0-9-]{1,64}$').hasMatch(value)) {
+  if (!isCanonicalStudentId(value)) {
     return null;
   }
   return value;
@@ -69,6 +71,13 @@ class _StudentQrScannerPageState extends State<StudentQrScannerPage> {
     if (studentId == null) {
       setState(() {
         _message = 'This QR code is not a valid Student ID Number.';
+      });
+      return;
+    }
+
+    if (!isApprovedDevelopmentStudentId(studentId)) {
+      setState(() {
+        _message = 'Development scanning accepts synthetic test IDs only.';
       });
       return;
     }
@@ -167,7 +176,7 @@ class _StudentQrScannerPageState extends State<StudentQrScannerPage> {
   Widget build(BuildContext context) {
     final builder = widget.scannerBuilder;
     return Scaffold(
-      appBar: AppBar(title: const Text('Scan HNU Student ID')),
+      appBar: AppBar(title: const Text('Scan synthetic Student ID')),
       body: Column(
         children: [
           Expanded(
@@ -196,8 +205,8 @@ class _StudentQrScannerPageState extends State<StudentQrScannerPage> {
           const Padding(
             padding: EdgeInsets.all(16),
             child: Text(
-              'Scan the plain-text QR code on the physical HNU ID. '
-              'No image is saved.',
+              'Scan an approved synthetic test QR code only. '
+              'Real student data is not permitted. No image is saved.',
               textAlign: TextAlign.center,
             ),
           ),
