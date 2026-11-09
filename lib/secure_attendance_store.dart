@@ -7,6 +7,7 @@ import 'package:sqflite/sqflite.dart' show getDatabasesPath;
 import 'package:sqlite3/sqlite3.dart';
 import 'package:uuid/uuid.dart';
 
+import 'development_scan_policy.dart';
 import 'secure_value_store.dart';
 
 enum ScanStatus { pending, accepted, rejected, duplicate, blocked, legacy }
@@ -59,7 +60,6 @@ class SecureAttendanceStore {
   static const legacyDatabaseFileName = 'hnu_dash_scans.db';
   static const encryptionKeyName = 'hnu_dash_scan_database_key_v1';
   static const tableName = 'attendance_scans';
-  static final _studentIdPattern = RegExp(r'^[A-Za-z0-9-]{1,64}$');
 
   final Database _database;
   final String staffUserId;
@@ -316,8 +316,25 @@ class SecureAttendanceStore {
     _ensureOpen();
     if (eventId.isEmpty ||
         checkpointId.isEmpty ||
-        !_studentIdPattern.hasMatch(studentId)) {
+        !isApprovedDevelopmentStudentId(studentId)) {
       throw ArgumentError('The event, checkpoint, or Student ID is invalid.');
+    }
+
+    // A terminal conflict must not be bypassed by creating a new UUID for
+    // the same event/checkpoint/Student ID. It remains support-only evidence.
+    final conflict = _database.select(
+      '''
+      SELECT scan_id FROM $tableName
+      WHERE staff_user_id = ? AND event_id = ? AND checkpoint_id = ?
+        AND student_id = ? AND submission_status = 'blocked' AND legacy = 0
+      LIMIT 1;
+    ''',
+      [staffUserId, eventId, checkpointId, studentId],
+    );
+    if (conflict.isNotEmpty) {
+      throw StateError(
+        'This scan payload has terminal blocked evidence. Contact support.',
+      );
     }
 
     final record = ScanRecord(
@@ -384,7 +401,7 @@ class SecureAttendanceStore {
     final rows = _database.select(
       '''
       SELECT count(*) AS total FROM $tableName
-      WHERE staff_user_id = ? AND submission_status IN ('pending', 'blocked')
+      WHERE staff_user_id = ? AND submission_status = 'pending'
         AND legacy = 0;
     ''',
       [staffUserId],
