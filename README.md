@@ -14,7 +14,16 @@ The Backend remains authoritative for Staff identity and assignment, event/check
 
 ## Development setup
 
-Requires Flutter stable and Android SDK. Run:
+Requires Flutter **3.47.9 / Dart 3.13.7** and Android SDK. The project requires Dart `^3.13.7`; Flutter 3.47.5 / Dart 3.13.4 cannot resolve its dependencies. CI uses Flutter tag `3.47.9` at commit `c197ca5199e9ee5661e865596c9c07294dfab51c`. For a separate local SDK without changing an existing Flutter installation:
+
+```bash
+git clone --depth 1 --branch 3.47.9 https://github.com/flutter/flutter.git "$HOME/develop/flutter-3.47.9"
+git -C "$HOME/develop/flutter-3.47.9" rev-parse HEAD # expect c197ca5199e9ee5661e865596c9c07294dfab51c
+export PATH="$HOME/develop/flutter-3.47.9/bin:$PATH"
+flutter --version # expect Flutter 3.47.9 and Dart 3.13.7
+```
+
+Run:
 
 ```bash
 flutter pub get
