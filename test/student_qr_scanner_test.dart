@@ -136,7 +136,9 @@ void main() {
     await tester.tap(find.text('Simulate permission denial'));
     await tester.pumpAndSettle();
     expect(
-      find.textContaining('Camera permission is required'),
+      find.text(
+        'Camera permission is required to scan an approved synthetic test QR code.',
+      ),
       findsOneWidget,
     );
 
