@@ -59,7 +59,9 @@ class _StudentQrScannerPageState extends State<StudentQrScannerPage> {
   void _onBarcodeCapture(BarcodeCapture capture) {
     if (_handling) return;
     if (capture.barcodes.length != 1) {
-      setState(() => _message = 'Show one HNU ID QR code at a time.');
+      setState(
+        () => _message = 'Show one approved synthetic test QR code at a time.',
+      );
       return;
     }
     _handleValue(capture.barcodes.single.rawValue);
@@ -141,7 +143,9 @@ class _StudentQrScannerPageState extends State<StudentQrScannerPage> {
             Icon(denied ? Icons.no_photography : Icons.camera_alt_outlined),
             const SizedBox(height: 12),
             Text(
-              denied ? 'Camera permission is required to scan an HNU ID.' : 'The camera is unavailable. Check camera access and try again.',
+              denied
+                  ? 'Camera permission is required to scan an approved synthetic test QR code.'
+                  : 'The camera is unavailable. Check camera access and try again.',
               textAlign: TextAlign.center,
             ),
             if (denied) ...[
