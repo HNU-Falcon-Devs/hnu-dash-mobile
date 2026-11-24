@@ -934,8 +934,9 @@ class _StaffWorkspaceState extends State<StaffWorkspace>
         account == null ||
         id == null ||
         !_foreground ||
-        _scanBusy)
+        _scanBusy) {
       return;
+    }
     if (_offlinePreparation?.id == id) _exitOffline();
     setState(() {
       _scanBusy = true;
@@ -961,8 +962,9 @@ class _StaffWorkspaceState extends State<StaffWorkspace>
         );
       }
     } finally {
-      if (_validScanAccount(account, generation))
+      if (_validScanAccount(account, generation)) {
         setState(() => _scanBusy = false);
+      }
     }
   }
 
@@ -988,8 +990,9 @@ class _StaffWorkspaceState extends State<StaffWorkspace>
         account == null ||
         !_foreground ||
         _scanBusy ||
-        !_mayComplete)
+        !_mayComplete) {
       return;
+    }
     final id = item.preparation.id;
     final count = item.intent ?? item.counts.submitted;
     if (_offlinePreparation?.id == id) _exitOffline();
@@ -1037,14 +1040,16 @@ class _StaffWorkspaceState extends State<StaffWorkspace>
       setState(() => _scanMessage = message);
       await _refreshScanRecords(account);
     } catch (_) {
-      if (valid())
+      if (valid()) {
         setState(
           () =>
               _scanMessage = 'Completion not confirmed. Reload local evidence.',
         );
+      }
     } finally {
-      if (_validScanAccount(account, generation))
+      if (_validScanAccount(account, generation)) {
         setState(() => _scanBusy = false);
+      }
     }
   }
 
