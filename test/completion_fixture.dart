@@ -2,7 +2,9 @@ import 'package:hnu_dash_mobile/offline_capture.dart';
 
 Map<String, Object?> statusResponse(
   OfflinePreparation prep, {
-  int uploaded = 0, String? disposition, bool sealed = false,
+  int uploaded = 0,
+  String? disposition,
+  bool sealed = false,
   String state = 'OPEN',
 }) => {
   'preparation_id': prep.id,
@@ -19,8 +21,11 @@ Map<String, Object?> statusResponse(
   'can_complete': disposition == null && state != 'FINALIZED',
 };
 
-Map<String, Object> completionResponse(OfflinePreparation prep, int count,
-    {bool replayed = false}) => {
+Map<String, Object> completionResponse(
+  OfflinePreparation prep,
+  int count, {
+  bool replayed = false,
+}) => {
   'preparation_id': prep.id,
   'disposition': 'completed',
   'uploaded_count': count,

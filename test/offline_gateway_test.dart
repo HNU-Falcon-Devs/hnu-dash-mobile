@@ -144,7 +144,10 @@ void main() {
       'p_preparation_id': preparationA,
       'p_acknowledged_count': 0,
     });
-    expect(() => queue('SYNTHETIC-LATE'), throwsA(isA<OfflineCaptureException>()));
+    expect(
+      () => queue('SYNTHETIC-LATE'),
+      throwsA(isA<OfflineCaptureException>()),
+    );
     final other = OfflineFixture(
       fixture.issued,
       assignment: assignmentB,
@@ -156,7 +159,8 @@ void main() {
     final prep = other.parse(request.id);
     store.saveOfflinePreparation(prep);
     final claim = store.createOfflineClaim(
-      guard: other.guard(prep), checkpointId: other.checkpoint.id,
+      guard: other.guard(prep),
+      checkpointId: other.checkpoint.id,
       studentId: 'SYNTHETIC-OTHER',
     );
     await sync(preparationId: preparationB);
@@ -166,161 +170,210 @@ void main() {
     expect(uploads.single, claim.parameters);
   });
 
-  test('queued blocked and server count mismatch never dispatch completion', () async {
-    await prepare();
-    final claim = queue('SYNTHETIC-PENDING');
-    await complete(0);
-    expect(declarations, isEmpty);
-    store.blockOffline(claim);
-    await complete(0);
-    expect(declarations, isEmpty);
-    expect(store.preparationSummary(preparationA).intent, isNull);
-  });
+  test(
+    'queued blocked and server count mismatch never dispatch completion',
+    () async {
+      await prepare();
+      final claim = queue('SYNTHETIC-PENDING');
+      await complete(0);
+      expect(declarations, isEmpty);
+      store.blockOffline(claim);
+      await complete(0);
+      expect(declarations, isEmpty);
+      expect(store.preparationSummary(preparationA).intent, isNull);
+    },
+  );
 
-  test('server-only evidence count cannot become a local declaration', () async {
-    await prepare();
-    final prep = store.preparationSummary(preparationA).preparation;
-    statusHandler = (_, _) async => statusResponse(prep, uploaded: 1);
-    await complete(0);
-    await complete(1);
-    expect(declarations, isEmpty);
-    expect(store.preparationSummary(preparationA).intent, isNull);
-  });
+  test(
+    'server-only evidence count cannot become a local declaration',
+    () async {
+      await prepare();
+      final prep = store.preparationSummary(preparationA).preparation;
+      statusHandler = (_, _) async => statusResponse(prep, uploaded: 1);
+      await complete(0);
+      await complete(1);
+      expect(declarations, isEmpty);
+      expect(store.preparationSummary(preparationA).intent, isNull);
+    },
+  );
 
-  test('after-seal completion allows zero count without reopening uploads', () async {
-    await prepare();
-    final prep = store.preparationSummary(preparationA).preparation;
-    statusHandler = (_, _) async =>
-        statusResponse(prep, sealed: true, state: 'SYNCING');
-    await complete(0);
-    expect(store.preparationSummary(preparationA).accounting?.declared, 0);
-    expect(gateway.activePreparation, isNull);
-    expect(uploads, isEmpty);
-  });
+  test(
+    'after-seal completion allows zero count without reopening uploads',
+    () async {
+      await prepare();
+      final prep = store.preparationSummary(preparationA).preparation;
+      statusHandler = (_, _) async =>
+          statusResponse(prep, sealed: true, state: 'SYNCING');
+      await complete(0);
+      expect(store.preparationSummary(preparationA).accounting?.declared, 0);
+      expect(gateway.activePreparation, isNull);
+      expect(uploads, isEmpty);
+    },
+  );
 
-  test('lost and malformed completion retains immutable intent across restart', () async {
-    await prepare();
-    queue('SYNTHETIC-A');
-    await sync();
-    completionHandler = (_, _) async => throw TimeoutException('lost response');
-    await complete(1);
-    expect(store.preparationSummary(preparationA).intent, 1);
-    expect(store.preparationSummary(preparationA).accounting, isNull);
-    expect(gateway.activePreparation, isNull);
-    await gateway.close();
-    await open(staffA);
-    await complete(0);
-    expect(declarations, hasLength(1));
-    completionHandler = (_, _) async => {'disposition': 'completed'};
-    await complete(1);
-    expect(store.preparationSummary(preparationA).accounting, isNull);
-    completionHandler = (params, _) async => completionResponse(
-      store.preparationSummary(preparationA).preparation,
-      params['p_acknowledged_count'] as int,
-      replayed: true,
-    );
-    await complete(1);
-    expect(declarations, hasLength(3));
-    expect(declarations.every((p) => p['p_acknowledged_count'] == 1), isTrue);
-    expect(store.preparationSummary(preparationA).accounting?.declared, 1);
-    expect(gateway.offlineCounts().submitted, 1);
-    expect(gateway.activePreparation, isNull);
-  });
+  test(
+    'lost and malformed completion retains immutable intent across restart',
+    () async {
+      await prepare();
+      queue('SYNTHETIC-A');
+      await sync();
+      completionHandler = (_, _) async =>
+          throw TimeoutException('lost response');
+      await complete(1);
+      expect(store.preparationSummary(preparationA).intent, 1);
+      expect(store.preparationSummary(preparationA).accounting, isNull);
+      expect(gateway.activePreparation, isNull);
+      await gateway.close();
+      await open(staffA);
+      await complete(0);
+      expect(declarations, hasLength(1));
+      completionHandler = (_, _) async => {'disposition': 'completed'};
+      await complete(1);
+      expect(store.preparationSummary(preparationA).accounting, isNull);
+      completionHandler = (params, _) async => completionResponse(
+        store.preparationSummary(preparationA).preparation,
+        params['p_acknowledged_count'] as int,
+        replayed: true,
+      );
+      await complete(1);
+      expect(declarations, hasLength(3));
+      expect(declarations.every((p) => p['p_acknowledged_count'] == 1), isTrue);
+      expect(store.preparationSummary(preparationA).accounting?.declared, 1);
+      expect(gateway.offlineCounts().submitted, 1);
+      expect(gateway.activePreparation, isNull);
+    },
+  );
 
-  test('authoritative status recovers completion or loss but never renews capture', () async {
-    await prepare();
-    final prep = store.preparationSummary(preparationA).preparation;
-    completionHandler = (_, _) async => throw TimeoutException('lost response');
-    await complete(0);
-    statusHandler = (_, _) async =>
-        statusResponse(prep, disposition: 'completed');
-    final status = await gateway.preparationStatus(preparationA, () => true);
-    expect(status.accounting?.declared, 0);
-    expect(store.preparationSummary(preparationA).intent, 0);
-    expect(store.preparationSummary(preparationA).accounting?.disposition, 'completed');
-    expect(await gateway.resumeOffline(preparationA, () => true), isFalse);
-    expect(declarations, hasLength(1));
-  });
+  test(
+    'authoritative status recovers completion or loss but never renews capture',
+    () async {
+      await prepare();
+      final prep = store.preparationSummary(preparationA).preparation;
+      completionHandler = (_, _) async =>
+          throw TimeoutException('lost response');
+      await complete(0);
+      statusHandler = (_, _) async =>
+          statusResponse(prep, disposition: 'completed');
+      final status = await gateway.preparationStatus(preparationA, () => true);
+      expect(status.accounting?.declared, 0);
+      expect(store.preparationSummary(preparationA).intent, 0);
+      expect(
+        store.preparationSummary(preparationA).accounting?.disposition,
+        'completed',
+      );
+      expect(await gateway.resumeOffline(preparationA, () => true), isFalse);
+      expect(declarations, hasLength(1));
+    },
+  );
 
-  test('known loss retains queued claims and allows legitimate upload replay', () async {
-    await prepare();
-    final claim = queue('SYNTHETIC-A');
-    final prep = store.preparationSummary(preparationA).preparation;
-    statusHandler = (_, _) async =>
-        statusResponse(prep, uploaded: 1, disposition: 'lost', sealed: true,
-            state: 'SYNCING');
-    await gateway.preparationStatus(preparationA, () => true);
-    expect(store.preparationSummary(preparationA).accounting?.disposition, 'lost');
-    expect(gateway.activePreparation, isNull);
-    expect(await gateway.resumeOffline(preparationA, () => true), isFalse);
-    await complete(0);
-    expect(declarations, isEmpty);
-    uploadHandler = (params, _) async => acknowledgement(params, replayed: true);
-    await sync();
-    expect(uploads.single, claim.parameters);
-    expect(store.preparationSummary(preparationA).counts.submitted, 1);
-  });
+  test(
+    'known loss retains queued claims and allows legitimate upload replay',
+    () async {
+      await prepare();
+      final claim = queue('SYNTHETIC-A');
+      final prep = store.preparationSummary(preparationA).preparation;
+      statusHandler = (_, _) async => statusResponse(
+        prep,
+        uploaded: 1,
+        disposition: 'lost',
+        sealed: true,
+        state: 'SYNCING',
+      );
+      await gateway.preparationStatus(preparationA, () => true);
+      expect(
+        store.preparationSummary(preparationA).accounting?.disposition,
+        'lost',
+      );
+      expect(gateway.activePreparation, isNull);
+      expect(await gateway.resumeOffline(preparationA, () => true), isFalse);
+      await complete(0);
+      expect(declarations, isEmpty);
+      uploadHandler = (params, _) async =>
+          acknowledgement(params, replayed: true);
+      await sync();
+      expect(uploads.single, claim.parameters);
+      expect(store.preparationSummary(preparationA).counts.submitted, 1);
+    },
+  );
 
-  test('resume requires valid status; denial and malformed response fail closed', () async {
-    await prepare();
-    final prep = store.preparationSummary(preparationA).preparation;
-    gateway.suspendOffline();
-    expect(gateway.canCaptureOffline(preparationA, checkpointId), isFalse);
-    statusHandler = (_, _) async =>
-        throw const PostgrestException(message: 'denied', code: '42501');
-    await expectLater(gateway.resumeOffline(preparationA, () => true), throwsA(isA<PostgrestException>()));
-    expect(gateway.canCaptureOffline(preparationA, checkpointId), isFalse);
-    statusHandler = (_, _) async => {...statusResponse(prep), 'expires_at': prep.cutoff.toIso8601String()};
-    await expectLater(gateway.resumeOffline(preparationA, () => true), throwsFormatException);
-    expect(gateway.canCaptureOffline(preparationA, checkpointId), isFalse);
-    statusHandler = (_, _) async => statusResponse(prep);
-    expect(await gateway.resumeOffline(preparationA, () => true), isTrue);
-    expect(gateway.canCaptureOffline(preparationA, checkpointId), isTrue);
-    await gateway.close();
-    await open(staffA);
-    await gateway.preparationStatus(preparationA, () => true);
-    expect(await gateway.resumeOffline(preparationA, () => true), isFalse);
-    expect(gateway.canCaptureOffline(preparationA, checkpointId), isFalse);
-  });
+  test(
+    'resume requires valid status; denial and malformed response fail closed',
+    () async {
+      await prepare();
+      final prep = store.preparationSummary(preparationA).preparation;
+      gateway.suspendOffline();
+      expect(gateway.canCaptureOffline(preparationA, checkpointId), isFalse);
+      statusHandler = (_, _) async =>
+          throw const PostgrestException(message: 'denied', code: '42501');
+      await expectLater(
+        gateway.resumeOffline(preparationA, () => true),
+        throwsA(isA<PostgrestException>()),
+      );
+      expect(gateway.canCaptureOffline(preparationA, checkpointId), isFalse);
+      statusHandler = (_, _) async => {
+        ...statusResponse(prep),
+        'expires_at': prep.cutoff.toIso8601String(),
+      };
+      await expectLater(
+        gateway.resumeOffline(preparationA, () => true),
+        throwsFormatException,
+      );
+      expect(gateway.canCaptureOffline(preparationA, checkpointId), isFalse);
+      statusHandler = (_, _) async => statusResponse(prep);
+      expect(await gateway.resumeOffline(preparationA, () => true), isTrue);
+      expect(gateway.canCaptureOffline(preparationA, checkpointId), isTrue);
+      await gateway.close();
+      await open(staffA);
+      await gateway.preparationStatus(preparationA, () => true);
+      expect(await gateway.resumeOffline(preparationA, () => true), isFalse);
+      expect(gateway.canCaptureOffline(preparationA, checkpointId), isFalse);
+    },
+  );
 
-  test('late status and completion responses cannot cross A-B-A accounts', () async {
-    await prepare();
-    final prep = store.preparationSummary(preparationA).preparation;
-    final dispatched = Completer<void>();
-    final response = Completer<dynamic>();
-    statusHandler = (_, _) {
-      dispatched.complete();
-      return response.future;
-    };
-    final pending = gateway.preparationStatus(preparationA, () => true);
-    final checked = expectLater(pending, throwsStateError);
-    await dispatched.future;
-    await open(staffB);
-    expect(gateway.preparations(), isEmpty);
-    await expectLater(gateway.preparationStatus(preparationA, () => true), throwsStateError);
-    await open(staffA);
-    response.complete(statusResponse(prep, disposition: 'completed'));
-    await checked;
-    expect(store.preparationSummary(preparationA).accounting, isNull);
-    statusHandler = (_, _) async => statusResponse(prep);
-    final sent = Completer<void>();
-    final reply = Completer<dynamic>();
-    completionHandler = (_, _) {
-      sent.complete();
-      return reply.future;
-    };
-    final completing = complete(0);
-    final completionCheck = expectLater(completing, throwsStateError);
-    await sent.future;
-    expect(store.preparationSummary(preparationA).intent, 0);
-    await open(staffB);
-    expect(gateway.preparations(), isEmpty);
-    await open(staffA);
-    reply.complete(completionResponse(prep, 0));
-    await completionCheck;
-    expect(store.preparationSummary(preparationA).intent, 0);
-    expect(store.preparationSummary(preparationA).accounting, isNull);
-  });
+  test(
+    'late status and completion responses cannot cross A-B-A accounts',
+    () async {
+      await prepare();
+      final prep = store.preparationSummary(preparationA).preparation;
+      final dispatched = Completer<void>();
+      final response = Completer<dynamic>();
+      statusHandler = (_, _) {
+        dispatched.complete();
+        return response.future;
+      };
+      final pending = gateway.preparationStatus(preparationA, () => true);
+      final checked = expectLater(pending, throwsStateError);
+      await dispatched.future;
+      await open(staffB);
+      expect(gateway.preparations(), isEmpty);
+      await expectLater(
+        gateway.preparationStatus(preparationA, () => true),
+        throwsStateError,
+      );
+      await open(staffA);
+      response.complete(statusResponse(prep, disposition: 'completed'));
+      await checked;
+      expect(store.preparationSummary(preparationA).accounting, isNull);
+      statusHandler = (_, _) async => statusResponse(prep);
+      final sent = Completer<void>();
+      final reply = Completer<dynamic>();
+      completionHandler = (_, _) {
+        sent.complete();
+        return reply.future;
+      };
+      final completing = complete(0);
+      final completionCheck = expectLater(completing, throwsStateError);
+      await sent.future;
+      expect(store.preparationSummary(preparationA).intent, 0);
+      await open(staffB);
+      expect(gateway.preparations(), isEmpty);
+      await open(staffA);
+      reply.complete(completionResponse(prep, 0));
+      await completionCheck;
+      expect(store.preparationSummary(preparationA).intent, 0);
+      expect(store.preparationSummary(preparationA).accounting, isNull);
+    },
+  );
 
   test('strict status and completion response parsing rejects wrong scope and counts', () {
     final prep = fixture.parse(requestId);
@@ -333,7 +386,10 @@ void main() {
       {...statusResponse(prep), 'declared_count': 0},
       {...statusResponse(prep), 'unexpected': true},
     ]) {
-      expect(() => OfflinePreparationStatus.parse(bad, prep), throwsFormatException);
+      expect(
+        () => OfflinePreparationStatus.parse(bad, prep),
+        throwsFormatException,
+      );
     }
     for (final bad in [
       {...completionResponse(prep, 0), 'accounted_by': staffB},
@@ -341,7 +397,10 @@ void main() {
       {...completionResponse(prep, 0), 'replayed': 'true'},
       {...completionResponse(prep, 0), 'accounted_at': 'invalid'},
     ]) {
-      expect(() => OfflineAccounting.acknowledgement(bad, prep, 0), throwsFormatException);
+      expect(
+        () => OfflineAccounting.acknowledgement(bad, prep, 0),
+        throwsFormatException,
+      );
     }
   });
 

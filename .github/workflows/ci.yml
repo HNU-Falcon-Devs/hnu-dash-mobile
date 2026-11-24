@@ -21,13 +21,7 @@ jobs:
       - name: Resolve dependencies
         run: flutter pub get
       - name: Check Dart formatting
-        id: formatting
         run: dart format --output=none --set-exit-if-changed .
-      - name: Print formatting patch on failure (temporary diagnostic)
-        if: failure() && steps.formatting.outcome == 'failure'
-        run: |
-          dart format .
-          git diff --no-ext-diff -- '*.dart'
       - name: Analyze
         run: flutter analyze
       - name: Install SQLite library for persistence tests

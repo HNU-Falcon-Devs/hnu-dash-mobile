@@ -799,16 +799,18 @@ class SecureAttendanceStore {
   OfflinePreparationSummary preparationSummary(String preparationId) {
     _ensureOpen();
     offlineUuid(preparationId);
-    final row = _database.select(
-      '''
+    final row = _database
+        .select(
+          '''
       SELECT p.*, a.intent_count, a.terminal
       FROM offline_preparations p LEFT JOIN offline_accounting a
         ON a.preparation_id = p.preparation_id
         AND a.staff_user_id = p.staff_user_id AND a.event_id = p.event_id
       WHERE p.staff_user_id = ? AND p.preparation_id = ?;
       ''',
-      [staffUserId, preparationId],
-    ).single;
+          [staffUserId, preparationId],
+        )
+        .single;
     final raw = jsonDecode(row['context'] as String) as Map;
     final preparation = OfflinePreparation.parse(
       raw,
@@ -829,22 +831,30 @@ class SecureAttendanceStore {
     return OfflinePreparationSummary(
       preparation,
       OfflineQueueCounts(
-        counts['queued'] ?? 0, counts['submitted'] ?? 0, counts['blocked'] ?? 0,
+        counts['queued'] ?? 0,
+        counts['submitted'] ?? 0,
+        counts['blocked'] ?? 0,
       ),
       row['intent_count'] == null ? null : completionCount(row['intent_count']),
       row['terminal'] == null
-          ? null : OfflineAccounting.parse(jsonDecode(row['terminal'] as String) as Map),
+          ? null
+          : OfflineAccounting.parse(
+              jsonDecode(row['terminal'] as String) as Map,
+            ),
     );
   }
 
   List<OfflinePreparationSummary> preparations({int offset = 0}) {
     _ensureOpen();
     if (offset < 0) throw ArgumentError.value(offset);
-    return _database.select(
-      'SELECT preparation_id FROM offline_preparations '
-      'WHERE staff_user_id = ? ORDER BY rowid DESC LIMIT 10 OFFSET ?;',
-      [staffUserId, offset],
-    ).map((row) => preparationSummary(row['preparation_id'] as String)).toList();
+    return _database
+        .select(
+          'SELECT preparation_id FROM offline_preparations '
+          'WHERE staff_user_id = ? ORDER BY rowid DESC LIMIT 10 OFFSET ?;',
+          [staffUserId, offset],
+        )
+        .map((row) => preparationSummary(row['preparation_id'] as String))
+        .toList();
   }
 
   void persistCompletionIntent(String preparationId, int count) {
@@ -853,7 +863,8 @@ class SecureAttendanceStore {
     _database.execute('BEGIN IMMEDIATE;');
     try {
       final summary = preparationSummary(preparationId);
-      if (summary.accounting != null || !summary.drained ||
+      if (summary.accounting != null ||
+          !summary.drained ||
           summary.counts.submitted != count ||
           (summary.intent != null && summary.intent != count)) {
         throw StateError('Completion intent does not match local evidence.');

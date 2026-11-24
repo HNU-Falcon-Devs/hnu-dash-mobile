@@ -231,7 +231,8 @@ class _StaffWorkspaceState extends State<StaffWorkspace>
     _foreground = state == AppLifecycleState.resumed;
     if (!_foreground) {
       _syncEpoch++;
-      if (state == AppLifecycleState.paused || state == AppLifecycleState.hidden) {
+      if (state == AppLifecycleState.paused ||
+          state == AppLifecycleState.hidden) {
         _offlineGateway?.suspendOffline();
         _exitOffline();
         _preparationStatus = null;
@@ -337,7 +338,8 @@ class _StaffWorkspaceState extends State<StaffWorkspace>
       final counts = offline?.offlineCounts();
       final offlineRecords = offline?.recentOffline();
       final syncGroups = offline?.offlineSyncGroups() ?? [];
-      final preparations = offline?.preparations(offset: _preparationOffset) ?? [];
+      final preparations =
+          offline?.preparations(offset: _preparationOffset) ?? [];
       final preparation = offline?.activePreparation;
       setState(() {
         _scanRecords = records;
@@ -347,7 +349,9 @@ class _StaffWorkspaceState extends State<StaffWorkspace>
         _offlineRecords = offlineRecords ?? [];
         _offlineSyncGroups = syncGroups;
         _preparations = preparations;
-        if (!preparations.any((item) => item.preparation.id == _statusPreparationId)) {
+        if (!preparations.any(
+          (item) => item.preparation.id == _statusPreparationId,
+        )) {
           _statusPreparationId = null;
           _preparationStatus = null;
         }
@@ -378,7 +382,8 @@ class _StaffWorkspaceState extends State<StaffWorkspace>
       final counts = offline?.offlineCounts();
       final offlineRecords = offline?.recentOffline();
       final syncGroups = offline?.offlineSyncGroups() ?? [];
-      final preparations = offline?.preparations(offset: _preparationOffset) ?? [];
+      final preparations =
+          offline?.preparations(offset: _preparationOffset) ?? [];
       final preparation = offline?.activePreparation;
       setState(() {
         _scanRecords = records;
@@ -387,7 +392,9 @@ class _StaffWorkspaceState extends State<StaffWorkspace>
         _offlineRecords = offlineRecords ?? [];
         _offlineSyncGroups = syncGroups;
         _preparations = preparations;
-        if (!preparations.any((item) => item.preparation.id == _statusPreparationId)) {
+        if (!preparations.any(
+          (item) => item.preparation.id == _statusPreparationId,
+        )) {
           _statusPreparationId = null;
           _preparationStatus = null;
         }
@@ -694,7 +701,9 @@ class _StaffWorkspaceState extends State<StaffWorkspace>
     final account = _account;
     final generation = _accountEpoch;
     final epoch = _syncEpoch;
-    if (gateway == null || account == null || !_foreground ||
+    if (gateway == null ||
+        account == null ||
+        !_foreground ||
         !_scanStoreReady ||
         _scanBusy ||
         _busy ||
@@ -714,12 +723,17 @@ class _StaffWorkspaceState extends State<StaffWorkspace>
       setState(() => _scanBusy = true);
       final resumed = await gateway.resumeOffline(
         preparation.id,
-        () => _foreground && epoch == _syncEpoch &&
+        () =>
+            _foreground &&
+            epoch == _syncEpoch &&
             _validScanAccount(account, generation),
       );
       if (!_validScanAccount(account, generation)) return;
       if (!resumed || !_foreground || epoch != _syncEpoch) {
-        setState(() => _scanMessage = 'Online preparation status could not authorize resuming capture.');
+        setState(
+          () => _scanMessage =
+              'Online preparation status could not authorize resuming capture.',
+        );
         await _refreshScanRecords(account);
         return;
       }
@@ -807,7 +821,8 @@ class _StaffWorkspaceState extends State<StaffWorkspace>
     });
     bool valid() =>
         _validScanAccount(account, generation) &&
-        _foreground && epoch == _syncEpoch &&
+        _foreground &&
+        epoch == _syncEpoch &&
         _offlineMode &&
         _offlinePreparation?.id == preparation.id &&
         _offlineCheckpoint?.id == checkpoint.id;
@@ -915,16 +930,23 @@ class _StaffWorkspaceState extends State<StaffWorkspace>
     final id = _statusPreparationId;
     final generation = _accountEpoch;
     final epoch = _syncEpoch;
-    if (gateway == null || account == null || id == null ||
-        !_foreground || _scanBusy) return;
+    if (gateway == null ||
+        account == null ||
+        id == null ||
+        !_foreground ||
+        _scanBusy)
+      return;
     if (_offlinePreparation?.id == id) _exitOffline();
     setState(() {
       _scanBusy = true;
       _preparationStatus = null;
       _scanMessage = null;
     });
-    bool valid() => _validScanAccount(account, generation) &&
-        _foreground && epoch == _syncEpoch && _statusPreparationId == id;
+    bool valid() =>
+        _validScanAccount(account, generation) &&
+        _foreground &&
+        epoch == _syncEpoch &&
+        _statusPreparationId == id;
     try {
       final status = await gateway.preparationStatus(id, valid);
       if (!valid()) return;
@@ -933,10 +955,14 @@ class _StaffWorkspaceState extends State<StaffWorkspace>
       setState(() => _preparationStatus = status);
     } catch (_) {
       if (valid()) {
-        setState(() => _scanMessage = 'Server status unavailable. Local evidence is retained.');
+        setState(
+          () => _scanMessage =
+              'Server status unavailable. Local evidence is retained.',
+        );
       }
     } finally {
-      if (_validScanAccount(account, generation)) setState(() => _scanBusy = false);
+      if (_validScanAccount(account, generation))
+        setState(() => _scanBusy = false);
     }
   }
 
@@ -945,8 +971,10 @@ class _StaffWorkspaceState extends State<StaffWorkspace>
     final status = _preparationStatus;
     if (item == null || !item.drained || item.accounting != null) return false;
     if (item.intent != null) return item.intent == item.counts.submitted;
-    return status != null && status.preparationId == item.preparation.id &&
-        status.canComplete && status.uploaded == item.counts.submitted;
+    return status != null &&
+        status.preparationId == item.preparation.id &&
+        status.canComplete &&
+        status.uploaded == item.counts.submitted;
   }
 
   Future<void> _completeSelectedPreparation() async {
@@ -955,14 +983,22 @@ class _StaffWorkspaceState extends State<StaffWorkspace>
     final account = _account;
     final generation = _accountEpoch;
     final epoch = _syncEpoch;
-    if (gateway == null || item == null || account == null ||
-        !_foreground || _scanBusy || !_mayComplete) return;
+    if (gateway == null ||
+        item == null ||
+        account == null ||
+        !_foreground ||
+        _scanBusy ||
+        !_mayComplete)
+      return;
     final id = item.preparation.id;
     final count = item.intent ?? item.counts.submitted;
     if (_offlinePreparation?.id == id) _exitOffline();
     setState(() => _scanBusy = true);
-    bool valid() => _validScanAccount(account, generation) &&
-        _foreground && epoch == _syncEpoch && _statusPreparationId == id;
+    bool valid() =>
+        _validScanAccount(account, generation) &&
+        _foreground &&
+        epoch == _syncEpoch &&
+        _statusPreparationId == id;
     try {
       final confirmation = DialogRoute<bool>(
         context: context,
@@ -975,15 +1011,22 @@ class _StaffWorkspaceState extends State<StaffWorkspace>
             'is not proof of all evidence or accepted attendance.',
           ),
           actions: [
-            TextButton(onPressed: () => Navigator.pop(context, false),
-                child: const Text('Cancel')),
-            FilledButton(onPressed: () => Navigator.pop(context, true),
-                child: const Text('Declare completion')),
+            TextButton(
+              onPressed: () => Navigator.pop(context, false),
+              child: const Text('Cancel'),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.pop(context, true),
+              child: const Text('Declare completion'),
+            ),
           ],
         ),
       );
       _offlineConfirmationRoute = confirmation;
-      final confirmed = await Navigator.of(context, rootNavigator: true).push(confirmation);
+      final confirmed = await Navigator.of(
+        context,
+        rootNavigator: true,
+      ).push(confirmation);
       if (identical(_offlineConfirmationRoute, confirmation)) {
         _offlineConfirmationRoute = null;
       }
@@ -994,9 +1037,14 @@ class _StaffWorkspaceState extends State<StaffWorkspace>
       setState(() => _scanMessage = message);
       await _refreshScanRecords(account);
     } catch (_) {
-      if (valid()) setState(() => _scanMessage = 'Completion not confirmed. Reload local evidence.');
+      if (valid())
+        setState(
+          () =>
+              _scanMessage = 'Completion not confirmed. Reload local evidence.',
+        );
     } finally {
-      if (_validScanAccount(account, generation)) setState(() => _scanBusy = false);
+      if (_validScanAccount(account, generation))
+        setState(() => _scanBusy = false);
     }
   }
 
@@ -1420,50 +1468,72 @@ class _StaffWorkspaceState extends State<StaffWorkspace>
                         value: item.preparation.id,
                         child: Text(
                           '${item.preparation.title}\n${item.preparation.id}',
-                          maxLines: 2, overflow: TextOverflow.ellipsis,
+                          maxLines: 2,
+                          overflow: TextOverflow.ellipsis,
                         ),
                       ),
                   ],
-                  onChanged: _scanBusy ? null : (id) => setState(() {
-                    _statusPreparationId = id;
-                    _preparationStatus = null;
-                  }),
+                  onChanged: _scanBusy
+                      ? null
+                      : (id) => setState(() {
+                          _statusPreparationId = id;
+                          _preparationStatus = null;
+                        }),
                 ),
-                Row(children: [
-                  TextButton(
-                    onPressed: _scanBusy || _preparationOffset == 0 ? null
-                        : () => _pagePreparations(_preparationOffset - 10),
-                    child: const Text('Previous preparations'),
-                  ),
-                  TextButton(
-                    onPressed: _scanBusy || _preparations.length < 10 ? null
-                        : () => _pagePreparations(_preparationOffset + 10),
-                    child: const Text('Next preparations'),
-                  ),
-                ]),
+                Row(
+                  children: [
+                    TextButton(
+                      onPressed: _scanBusy || _preparationOffset == 0
+                          ? null
+                          : () => _pagePreparations(_preparationOffset - 10),
+                      child: const Text('Previous preparations'),
+                    ),
+                    TextButton(
+                      onPressed: _scanBusy || _preparations.length < 10
+                          ? null
+                          : () => _pagePreparations(_preparationOffset + 10),
+                      child: const Text('Next preparations'),
+                    ),
+                  ],
+                ),
                 if (_selectedPreparation case final item?) ...[
-                  Text('Local: ${item.counts.queued} queued, '
-                      '${item.counts.blocked} blocked, ${item.counts.submitted} submitted'),
+                  Text(
+                    'Local: ${item.counts.queued} queued, '
+                    '${item.counts.blocked} blocked, ${item.counts.submitted} submitted',
+                  ),
                   if (item.intent != null)
-                    Text('Saved declaration: ${item.intent} acknowledged claims'),
+                    Text(
+                      'Saved declaration: ${item.intent} acknowledged claims',
+                    ),
                   if (item.accounting != null)
-                    Text('Retained server accounting: ${item.accounting!.disposition}; '
-                        '${item.accounting!.uploaded} uploaded'),
+                    Text(
+                      'Retained server accounting: ${item.accounting!.disposition}; '
+                      '${item.accounting!.uploaded} uploaded',
+                    ),
                   if (item.accounting != null &&
                       item.accounting!.declared != item.counts.submitted)
-                    const Text('Accounting differs from local evidence. Contact support.'),
+                    const Text(
+                      'Accounting differs from local evidence. Contact support.',
+                    ),
                   if (_preparationStatus case final status?)
-                    Text('Server: ${status.uploaded} durable claims; '
-                        '${status.accounting?.disposition ?? "unaccounted"}'
-                        '${status.sealedAt != null ? " — sealed" : ""}'),
+                    Text(
+                      'Server: ${status.uploaded} durable claims; '
+                      '${status.accounting?.disposition ?? "unaccounted"}'
+                      '${status.sealedAt != null ? " — sealed" : ""}',
+                    ),
                   OutlinedButton(
                     onPressed: _scanBusy ? null : _checkPreparationStatus,
                     child: const Text('Check server status (online)'),
                   ),
                   OutlinedButton(
-                    onPressed: _scanBusy || !_mayComplete ? null : _completeSelectedPreparation,
-                    child: Text(item.intent == null ? 'Complete preparation (online)'
-                        : 'Retry saved declaration (online)'),
+                    onPressed: _scanBusy || !_mayComplete
+                        ? null
+                        : _completeSelectedPreparation,
+                    child: Text(
+                      item.intent == null
+                          ? 'Complete preparation (online)'
+                          : 'Retry saved declaration (online)',
+                    ),
                   ),
                 ],
               ],
