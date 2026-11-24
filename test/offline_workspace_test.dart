@@ -122,7 +122,10 @@ void main() {
       final target = find.text(label);
       await tester.scrollUntilVisible(target, 150);
       await tester.tap(target);
-      await tester.pumpAndSettle();
+      // Offline capture keeps an indeterminate progress indicator active
+      // behind the scanner and confirmation dialog.
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 500));
     }
 
     await tap('Synthetic Assembly');
@@ -134,7 +137,9 @@ void main() {
     await tap('Entrance');
     await tap('Scan synthetic ID offline');
     await tester.tap(find.text('Use synthetic QR'));
-    await tester.pumpAndSettle();
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 500));
+    await tester.pump(const Duration(milliseconds: 500));
     expect(find.text('Confirm offline capture'), findsOneWidget);
     expect(find.text('Student ID: ••••3456'), findsOneWidget);
     expect(scans.saved, 0);
@@ -143,7 +148,9 @@ void main() {
     expect(scans.saved, 0);
     await tap('Scan synthetic ID offline');
     await tester.tap(find.text('Use synthetic QR'));
-    await tester.pumpAndSettle();
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 500));
+    await tester.pump(const Duration(milliseconds: 500));
     await tester.tap(find.text('Save offline claim'));
     await tester.pumpAndSettle();
     expect(scans.saved, 1);

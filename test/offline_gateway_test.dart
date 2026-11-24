@@ -173,6 +173,31 @@ void main() {
     expect(gateway.offlineCounts().submitted, 1);
   });
 
+  test('state or authorization denial preserves an original upload', () async {
+    await prepare();
+    final claim = queue('SYNTHETIC-A');
+    for (final code in ['55000', '42501']) {
+      uploadHandler = (_, _) async =>
+          throw PostgrestException(message: 'synthetic denial', code: code);
+      await sync();
+      expect(gateway.activePreparation, isNull);
+      expect(gateway.offlineCounts().queued, 1);
+      expect(store.readQueuedOffline().single.parameters, claim.parameters);
+    }
+    uploadHandler = (params, _) async =>
+        acknowledgement(params, replayed: true);
+    await sync();
+    expect(uploads, hasLength(3));
+    expect(
+      uploads.every((payload) => payload['p_capture_id'] == claim.id),
+      isTrue,
+    );
+    expect(uploads[0], uploads[1]);
+    expect(uploads[1], uploads[2]);
+    expect(gateway.offlineCounts().submitted, 1);
+    expect(gateway.offlineCounts().queued, 0);
+  });
+
   test('foreground stop retains the remaining claim', () async {
     await prepare();
     queue('SYNTHETIC-A');
