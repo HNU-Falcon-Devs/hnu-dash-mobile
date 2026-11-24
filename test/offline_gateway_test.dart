@@ -77,7 +77,7 @@ void main() {
       openStore: (staff) async {
         store = await SecureAttendanceStore.open(
           databasePath: '${directory.path}/evidence.db',
-          legacyPath: '${directory.path}/legacy.db',
+          legacyDatabasePath: '${directory.path}/legacy.db',
           keyStore: keys,
           staffUserId: staff,
         );

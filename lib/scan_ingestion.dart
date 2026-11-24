@@ -87,6 +87,22 @@ Future<dynamic> submitPinnedAttendanceRpc(
 ) => client
     .rpc('ingest_attendance_scan', params: parameters)
     .setHeader('Authorization', 'Bearer $accessToken');
+Future<dynamic> preparePinnedOfflineRpc(
+  SupabaseClient client,
+  Map<String, dynamic> parameters,
+  String accessToken,
+) => client
+    .rpc('prepare_offline_capture', params: parameters)
+    .setHeader('Authorization', 'Bearer $accessToken');
+
+Future<dynamic> submitPinnedOfflineRpc(
+  SupabaseClient client,
+  Map<String, dynamic> parameters,
+  String accessToken,
+) => client
+    .rpc('submit_offline_capture', params: parameters)
+    .setHeader('Authorization', 'Bearer $accessToken');
+
 typedef AttendanceStoreOpener = Future<SecureAttendanceStore> Function(
   String staffUserId,
 );
@@ -108,12 +124,10 @@ class SupabaseStaffScanGateway
          },
          ingest: (parameters, token) =>
              submitPinnedAttendanceRpc(client, parameters, token),
-         prepare: (parameters, token) => client
-             .rpc('prepare_offline_capture', params: parameters)
-             .setHeader('Authorization', 'Bearer $token'),
-         upload: (parameters, token) => client
-             .rpc('submit_offline_capture', params: parameters)
-             .setHeader('Authorization', 'Bearer $token'),
+         prepare: (parameters, token) =>
+             preparePinnedOfflineRpc(client, parameters, token),
+         upload: (parameters, token) =>
+             submitPinnedOfflineRpc(client, parameters, token),
          openStore: (staffUserId) => SecureAttendanceStore.openOnDevice(
            staffUserId: staffUserId,
            keyStore: secureValues,

@@ -7,6 +7,43 @@ import 'package:http/testing.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
 void main() {
+  test('offline RPCs pin their bearer and use only M4.1 endpoints', () async {
+    final observed = <String>[];
+    final transport = MockClient((request) async {
+      observed.add(request.url.path);
+      expect(request.headers['authorization'], 'Bearer token-owner');
+      expect(jsonDecode(request.body), {'synthetic': 'payload'});
+      return http.Response(
+        '{}',
+        200,
+        headers: {'content-type': 'application/json'},
+        request: request,
+      );
+    });
+    final client = SupabaseClient(
+      'https://project.example',
+      'sb_publishable_synthetic_test',
+      httpClient: transport,
+      accessToken: () async => 'token-other-account',
+    );
+    addTearDown(client.dispose);
+    await preparePinnedOfflineRpc(
+      client,
+      {'synthetic': 'payload'},
+      'token-owner',
+    );
+    await submitPinnedOfflineRpc(
+      client,
+      {'synthetic': 'payload'},
+      'token-owner',
+    );
+    expect(observed, [
+      '/rest/v1/rpc/prepare_offline_capture',
+      '/rest/v1/rpc/submit_offline_capture',
+    ]);
+  });
+
+
   test(
     'RPC sends the originating token despite shared-session changes',
     () async {
