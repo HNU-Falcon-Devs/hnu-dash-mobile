@@ -773,13 +773,42 @@ class SecureAttendanceStore {
     replayed: row['replayed'] == null ? null : row['replayed'] == 1,
   );
 
-  List<OfflineClaim> readQueuedOffline() {
+  List<OfflineSyncGroup> offlineSyncGroups() {
     _ensureOpen();
     return _database
         .select(
-          "SELECT * FROM offline_claims WHERE staff_user_id = ? "
-          "AND status = 'queued' ORDER BY rowid;",
+          '''
+          SELECT p.preparation_id, p.context, count(*) AS queued
+          FROM offline_claims c
+          JOIN offline_preparations p
+            ON p.preparation_id = c.preparation_id
+            AND p.staff_user_id = c.staff_user_id
+            AND p.event_id = c.event_id
+          WHERE c.staff_user_id = ? AND c.status = 'queued'
+          GROUP BY p.preparation_id, p.context
+          ORDER BY min(c.rowid);
+          ''',
           [staffUserId],
+        )
+        .map((row) {
+          final context = jsonDecode(row['context'] as String) as Map;
+          return OfflineSyncGroup(
+            row['preparation_id'] as String,
+            context['event_title'] as String,
+            row['queued'] as int,
+          );
+        })
+        .toList();
+  }
+
+  List<OfflineClaim> readQueuedOffline(String preparationId) {
+    _ensureOpen();
+    offlineUuid(preparationId);
+    return _database
+        .select(
+          "SELECT * FROM offline_claims WHERE staff_user_id = ? "
+          "AND preparation_id = ? AND status = 'queued' ORDER BY rowid;",
+          [staffUserId, preparationId],
         )
         .map(_offlineClaim)
         .toList();

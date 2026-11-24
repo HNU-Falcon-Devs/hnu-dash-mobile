@@ -51,9 +51,11 @@ abstract interface class OfflineScanGateway {
     required String studentId,
   });
   OfflineQueueCounts offlineCounts();
+  List<OfflineSyncGroup> offlineSyncGroups();
   List<OfflineClaim> recentOffline({int offset = 0});
   Future<String> syncOffline(
     void Function(OfflineQueueCounts) onProgress, {
+    required String preparationId,
     required bool Function() shouldContinue,
   });
 }
@@ -542,6 +544,12 @@ class SupabaseStaffScanGateway implements StaffScanGateway, OfflineScanGateway {
   }
 
   @override
+  List<OfflineSyncGroup> offlineSyncGroups() {
+    _ensureCurrentAccount();
+    return _store!.offlineSyncGroups();
+  }
+
+  @override
   List<OfflineClaim> recentOffline({int offset = 0}) {
     _ensureCurrentAccount();
     return _store!.readRecentOffline(offset: offset);
@@ -550,6 +558,7 @@ class SupabaseStaffScanGateway implements StaffScanGateway, OfflineScanGateway {
   @override
   Future<String> syncOffline(
     void Function(OfflineQueueCounts) onProgress, {
+    required String preparationId,
     required bool Function() shouldContinue,
   }) => _exclusive(() async {
     _ensureCurrentAccount();
@@ -557,15 +566,18 @@ class SupabaseStaffScanGateway implements StaffScanGateway, OfflineScanGateway {
     final staff = _staffUserId!;
     final upload = _upload;
     if (upload == null) throw StateError('Offline upload unavailable.');
-    // Snapshot only this owner's unresolved claims; no client-clock cutoff
-    // or preparation-expiry check can prevent a legitimate server replay.
-    final queued = store.readQueuedOffline();
+    // Snapshot only the explicitly selected preparation for this owner.
+    // Do not filter by client time: an authorized replay can outlive expiry.
+    final queued = store.readQueuedOffline(preparationId);
+    if (queued.isEmpty) {
+      return 'No queued claims for this preparation. Reload local evidence.';
+    }
     for (final claim in queued) {
       _ensureBoundAccount(store, staff);
       if (!shouldContinue()) {
         return 'Sync paused outside the foreground. Resume explicitly.';
       }
-      if (claim.staffId != staff) {
+      if (claim.staffId != staff || claim.preparationId != preparationId) {
         throw StateError('Offline claim owner mismatch.');
       }
       try {
@@ -605,7 +617,7 @@ class SupabaseStaffScanGateway implements StaffScanGateway, OfflineScanGateway {
         return 'Sync paused: no durable acknowledgement confirmed. Retry the original queued claim explicitly.';
       }
     }
-    return 'Upload pass finished. Submitted claims await review; local counts are not proof of completion.';
+    return 'Selected preparation upload pass finished. Submitted claims await review; other evidence is unchanged.';
   });
 
   ScanAttemptResult _pendingResult(ScanRecord record) => ScanAttemptResult(

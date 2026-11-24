@@ -34,17 +34,24 @@ class OfflineFixture {
     this.staff = staffA,
     this.assignment = assignmentA,
     this.preparation = preparationA,
+    this.event = eventId,
+    this.checkpointIdentifier = checkpointId,
   });
 
   final DateTime issued;
-  final String staff, assignment, preparation;
+  final String staff, assignment, preparation, event, checkpointIdentifier;
   DateTime get starts => issued.subtract(const Duration(hours: 1));
   DateTime get ends => issued.add(const Duration(hours: 2));
   DateTime get closes => issued.add(const Duration(hours: 1));
   DateTime get cutoff => closes.add(const Duration(hours: 24));
 
-  OfflineCheckpoint get checkpoint =>
-      OfflineCheckpoint(checkpointId, 'Entrance', 'IN', starts, closes);
+  OfflineCheckpoint get checkpoint => OfflineCheckpoint(
+    checkpointIdentifier,
+    'Entrance',
+    'IN',
+    starts,
+    closes,
+  );
 
   Map<String, Object> response(
     String request, {
@@ -53,7 +60,7 @@ class OfflineFixture {
   }) => {
     'preparation_id': preparation,
     'request_id': request,
-    'event_id': eventId,
+    'event_id': event,
     'assignment_id': assignment,
     'staff_user_id': staff,
     'event_title': 'Synthetic Assembly',
@@ -68,7 +75,7 @@ class OfflineFixture {
 
   OfflinePreparation parse(String request) => OfflinePreparation.parse(
     response(request),
-    eventId: eventId,
+    eventId: event,
     assignmentId: assignment,
     staffId: staff,
     requestId: request,

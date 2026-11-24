@@ -131,7 +131,8 @@ void main() {
 
       store = await open(staff: staffB);
       expect(store.offlineCounts().queued, 0);
-      expect(store.readQueuedOffline(), isEmpty);
+      expect(store.readQueuedOffline(preparationA), isEmpty);
+      expect(store.offlineSyncGroups(), isEmpty);
       expect(
         () => store.acknowledgeOffline(
           claim,
@@ -146,7 +147,7 @@ void main() {
       await store.close();
 
       store = await open();
-      final saved = store.readQueuedOffline().single;
+      final saved = store.readQueuedOffline(preparationA).single;
       expect(saved.parameters, claim.parameters);
       store.acknowledgeOffline(
         saved,
@@ -154,7 +155,7 @@ void main() {
       );
       expect(store.offlineCounts().submitted, 1);
       expect(store.readRecentOffline().single.replayed, isTrue);
-      expect(store.readQueuedOffline(), isEmpty);
+      expect(store.readQueuedOffline(preparationA), isEmpty);
     },
   );
 
@@ -172,7 +173,7 @@ void main() {
       await expectLater(open(keyStore: wrong), throwsA(anything));
       expect(await File(databasePath).readAsBytes(), bytes);
       store = await open();
-      expect(store.readQueuedOffline().single.parameters, claim.parameters);
+      expect(store.readQueuedOffline(preparationA).single.parameters, claim.parameters);
     },
   );
 
@@ -203,7 +204,7 @@ void main() {
         ),
         throwsStateError,
       );
-      expect(store.readQueuedOffline().single.id, offline.id);
+      expect(store.readQueuedOffline(preparationA).single.id, offline.id);
     },
   );
 
@@ -218,7 +219,7 @@ void main() {
       ) {
         capture(guard, 'SYNTHETIC-$index');
       }
-      final first = store.readQueuedOffline().first;
+      final first = store.readQueuedOffline(preparationA).first;
       store.blockOffline(first);
       expect(store.offlineCounts().queued, 2399);
       expect(store.offlineCounts().blocked, 1);
@@ -247,7 +248,7 @@ void main() {
       store = await open();
       expect(store.offlineCounts().queued, 2399);
       expect(store.offlineCounts().blocked, 1);
-      final queued = store.readQueuedOffline().first;
+      final queued = store.readQueuedOffline(preparationA).first;
       store.acknowledgeOffline(
         queued,
         OfflineAcknowledgement(fixture.issued, false),

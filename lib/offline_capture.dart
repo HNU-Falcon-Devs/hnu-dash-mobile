@@ -333,3 +333,11 @@ class OfflineQueueCounts {
 
   final int queued, submitted, blocked;
 }
+
+/// Local upload selection only; not a Backend authorization or status.
+class OfflineSyncGroup {
+  const OfflineSyncGroup(this.id, this.title, this.queued);
+
+  final String id, title;
+  final int queued;
+}

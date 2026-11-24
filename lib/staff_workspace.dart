@@ -184,6 +184,9 @@ class _StaffWorkspaceState extends State<StaffWorkspace>
   OfflineCheckpoint? _offlineCheckpoint;
   OfflineQueueCounts _offlineCounts = const OfflineQueueCounts(0, 0, 0);
   List<OfflineClaim> _offlineRecords = [];
+  List<OfflineSyncGroup> _offlineSyncGroups = [];
+  String? _syncPreparationId;
+  DialogRoute<bool>? _offlineConfirmationRoute;
   bool _offlineMode = false;
   bool _foreground = true;
   int _syncEpoch = 0;
@@ -239,6 +242,11 @@ class _StaffWorkspaceState extends State<StaffWorkspace>
     _accountEpoch++;
     _syncEpoch++;
     _offlineTimer?.cancel();
+    final confirmation = _offlineConfirmationRoute;
+    _offlineConfirmationRoute = null;
+    if (confirmation != null && confirmation.isActive) {
+      confirmation.navigator?.removeRoute(confirmation);
+    }
     setState(() {
       _events = [];
       _selected = null;
@@ -257,6 +265,8 @@ class _StaffWorkspaceState extends State<StaffWorkspace>
       _offlineCheckpoint = null;
       _offlineCounts = const OfflineQueueCounts(0, 0, 0);
       _offlineRecords = [];
+      _offlineSyncGroups = [];
+      _syncPreparationId = null;
       _offlineOffset = 0;
     });
   }
@@ -312,6 +322,7 @@ class _StaffWorkspaceState extends State<StaffWorkspace>
       final offline = _offlineGateway;
       final counts = offline?.offlineCounts();
       final offlineRecords = offline?.recentOffline();
+      final syncGroups = offline?.offlineSyncGroups() ?? [];
       final preparation = offline?.activePreparation;
       setState(() {
         _scanRecords = records;
@@ -319,6 +330,10 @@ class _StaffWorkspaceState extends State<StaffWorkspace>
         _scanStoreReady = true;
         _offlineCounts = counts ?? const OfflineQueueCounts(0, 0, 0);
         _offlineRecords = offlineRecords ?? [];
+        _offlineSyncGroups = syncGroups;
+        if (!syncGroups.any((group) => group.id == _syncPreparationId)) {
+          _syncPreparationId = null;
+        }
         _offlineOffset = 0;
         _offlinePreparation = preparation;
       });
@@ -342,12 +357,17 @@ class _StaffWorkspaceState extends State<StaffWorkspace>
       final offline = _offlineGateway;
       final counts = offline?.offlineCounts();
       final offlineRecords = offline?.recentOffline();
+      final syncGroups = offline?.offlineSyncGroups() ?? [];
       final preparation = offline?.activePreparation;
       setState(() {
         _scanRecords = records;
         _hasUnresolvedScans = unresolved;
         _offlineCounts = counts ?? const OfflineQueueCounts(0, 0, 0);
         _offlineRecords = offlineRecords ?? [];
+        _offlineSyncGroups = syncGroups;
+        if (!syncGroups.any((group) => group.id == _syncPreparationId)) {
+          _syncPreparationId = null;
+        }
         _offlineOffset = 0;
         _offlinePreparation = preparation;
         if (preparation == null) {
@@ -368,6 +388,8 @@ class _StaffWorkspaceState extends State<StaffWorkspace>
         _offlinePreparation = null;
         _offlineCheckpoint = null;
         _offlineRecords = [];
+        _offlineSyncGroups = [];
+        _syncPreparationId = null;
         _offlineCounts = const OfflineQueueCounts(0, 0, 0);
         _offlineTimer?.cancel();
       });
@@ -750,7 +772,7 @@ class _StaffWorkspaceState extends State<StaffWorkspace>
           !isApprovedDevelopmentStudentId(studentId)) {
         return;
       }
-      final confirmed = await showDialog<bool>(
+      final confirmation = DialogRoute<bool>(
         context: context,
         builder: (context) => AlertDialog(
           title: const Text('Confirm offline capture'),
@@ -778,6 +800,14 @@ class _StaffWorkspaceState extends State<StaffWorkspace>
           ],
         ),
       );
+      _offlineConfirmationRoute = confirmation;
+      final confirmed = await Navigator.of(
+        context,
+        rootNavigator: true,
+      ).push(confirmation);
+      if (identical(_offlineConfirmationRoute, confirmation)) {
+        _offlineConfirmationRoute = null;
+      }
       if (confirmed != true || !valid()) return;
       gateway.captureOffline(
         preparationId: preparation.id,
@@ -810,7 +840,10 @@ class _StaffWorkspaceState extends State<StaffWorkspace>
     final account = _account;
     final generation = _accountEpoch;
     final syncEpoch = _syncEpoch;
+    final preparationId = _syncPreparationId;
     if (gateway == null ||
+        preparationId == null ||
+        !_offlineSyncGroups.any((group) => group.id == preparationId) ||
         account == null ||
         !_foreground ||
         !_scanStoreReady ||
@@ -828,6 +861,7 @@ class _StaffWorkspaceState extends State<StaffWorkspace>
           if (!_validScanAccount(account, generation)) return;
           setState(() => _offlineCounts = counts);
         },
+        preparationId: preparationId,
         shouldContinue: () =>
             _foreground &&
             _syncEpoch == syncEpoch &&
@@ -879,6 +913,7 @@ class _StaffWorkspaceState extends State<StaffWorkspace>
         subtitle: Text(
           'Student ID: ${maskStudentId(claim.studentId)}\n'
           'Claimed: ${manilaTime(claim.claimedAt)} (untrusted)\n'
+          'Preparation UUID: ${claim.preparationId}\n'
           'Capture UUID: ${claim.id}',
         ),
         isThreeLine: true,
@@ -1172,8 +1207,31 @@ class _StaffWorkspaceState extends State<StaffWorkspace>
                   child: const Text('Exit offline capture mode'),
                 ),
               ],
+              if (_offlineSyncGroups.isNotEmpty) ...[
+                const Text('Select a preparation to upload its queued claims.'),
+                DropdownButton<String>(
+                  key: const Key('offline-sync-preparation'),
+                  isExpanded: true,
+                  value: _syncPreparationId,
+                  hint: const Text('Select preparation to sync'),
+                  items: [
+                    for (final group in _offlineSyncGroups)
+                      DropdownMenuItem(
+                        value: group.id,
+                        child: Text(
+                          '${group.title} • ${group.queued} queued\n${group.id}',
+                          maxLines: 2,
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                      ),
+                  ],
+                  onChanged: _scanBusy
+                      ? null
+                      : (id) => setState(() => _syncPreparationId = id),
+                ),
+              ],
               OutlinedButton(
-                onPressed: _scanBusy || _offlineCounts.queued == 0
+                onPressed: _scanBusy || _syncPreparationId == null
                     ? null
                     : _syncOffline,
                 child: const Text('Sync queued claims (online)'),
