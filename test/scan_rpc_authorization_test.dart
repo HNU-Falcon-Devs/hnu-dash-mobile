@@ -27,22 +27,17 @@ void main() {
       accessToken: () async => 'token-other-account',
     );
     addTearDown(client.dispose);
-    await preparePinnedOfflineRpc(
-      client,
-      {'synthetic': 'payload'},
-      'token-owner',
-    );
-    await submitPinnedOfflineRpc(
-      client,
-      {'synthetic': 'payload'},
-      'token-owner',
-    );
+    await preparePinnedOfflineRpc(client, {
+      'synthetic': 'payload',
+    }, 'token-owner');
+    await submitPinnedOfflineRpc(client, {
+      'synthetic': 'payload',
+    }, 'token-owner');
     expect(observed, [
       '/rest/v1/rpc/prepare_offline_capture',
       '/rest/v1/rpc/submit_offline_capture',
     ]);
   });
-
 
   test(
     'RPC sends the originating token despite shared-session changes',

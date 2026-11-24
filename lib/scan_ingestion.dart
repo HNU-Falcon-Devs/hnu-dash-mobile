@@ -107,8 +107,7 @@ typedef AttendanceStoreOpener = Future<SecureAttendanceStore> Function(
   String staffUserId,
 );
 
-class SupabaseStaffScanGateway
-    implements StaffScanGateway, OfflineScanGateway {
+class SupabaseStaffScanGateway implements StaffScanGateway, OfflineScanGateway {
   SupabaseStaffScanGateway.forSupabase(
     SupabaseClient client, {
     required SecureValueStore secureValues,

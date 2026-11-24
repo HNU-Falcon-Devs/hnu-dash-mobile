@@ -90,10 +90,10 @@ void main() {
 
     store = await open();
     final recent = await store.readRecent();
-    expect(recent.map((r) => r.scanId), containsAll([
-      pending.scanId,
-      accepted.scanId,
-    ]));
+    expect(
+      recent.map((r) => r.scanId),
+      containsAll([pending.scanId, accepted.scanId]),
+    );
     expect((await store.readPending()).single.studentId, '00000123456');
     expect(
       recent.singleWhere((r) => r.scanId == accepted.scanId).status,
@@ -113,96 +113,109 @@ void main() {
     migrated.close();
   });
 
-  test('request and queued payload survive reopen; other account is isolated', () async {
-    final request = store.offlineRequest(eventId, assignmentA);
-    expect(request.created, isTrue);
-    await store.close();
-    store = await open();
-    expect(store.offlineRequest(eventId, assignmentA), (
-      id: request.id,
-      created: false,
-    ));
-    final prep = fixture.parse(request.id);
-    store.saveOfflinePreparation(prep);
-    final claim = capture(fixture.guard(prep), 'SYNTHETIC-00Ab-C');
-    await store.close();
+  test(
+    'request and queued payload survive reopen; other account is isolated',
+    () async {
+      final request = store.offlineRequest(eventId, assignmentA);
+      expect(request.created, isTrue);
+      await store.close();
+      store = await open();
+      expect(store.offlineRequest(eventId, assignmentA), (
+        id: request.id,
+        created: false,
+      ));
+      final prep = fixture.parse(request.id);
+      store.saveOfflinePreparation(prep);
+      final claim = capture(fixture.guard(prep), 'SYNTHETIC-00Ab-C');
+      await store.close();
 
-    store = await open(staff: staffB);
-    expect(store.offlineCounts().queued, 0);
-    expect(store.readQueuedOffline(), isEmpty);
-    expect(
-      () => store.acknowledgeOffline(
-        claim,
-        OfflineAcknowledgement(fixture.issued, false),
-      ),
-      throwsStateError,
-    );
-    expect(
-      () => capture(fixture.guard(prep), '00000123456'),
-      throwsStateError,
-    );
-    await store.close();
+      store = await open(staff: staffB);
+      expect(store.offlineCounts().queued, 0);
+      expect(store.readQueuedOffline(), isEmpty);
+      expect(
+        () => store.acknowledgeOffline(
+          claim,
+          OfflineAcknowledgement(fixture.issued, false),
+        ),
+        throwsStateError,
+      );
+      expect(
+        () => capture(fixture.guard(prep), '00000123456'),
+        throwsStateError,
+      );
+      await store.close();
 
-    store = await open();
-    final saved = store.readQueuedOffline().single;
-    expect(saved.parameters, claim.parameters);
-    store.acknowledgeOffline(
-      saved,
-      OfflineAcknowledgement(fixture.issued, true),
-    );
-    expect(store.offlineCounts().submitted, 1);
-    expect(store.readRecentOffline().single.replayed, isTrue);
-    expect(store.readQueuedOffline(), isEmpty);
-  });
+      store = await open();
+      final saved = store.readQueuedOffline().single;
+      expect(saved.parameters, claim.parameters);
+      store.acknowledgeOffline(
+        saved,
+        OfflineAcknowledgement(fixture.issued, true),
+      );
+      expect(store.offlineCounts().submitted, 1);
+      expect(store.readRecentOffline().single.replayed, isTrue);
+      expect(store.readQueuedOffline(), isEmpty);
+    },
+  );
 
-  test('missing or wrong key preserves ciphertext and offline evidence', () async {
-    final claim = capture(prepare(fixture), 'SYNTHETIC-SECRET-0001');
-    await store.close();
-    final bytes = await File(databasePath).readAsBytes();
-    expect(latin1.decode(bytes), isNot(contains(claim.studentId)));
-    expect(latin1.decode(bytes), isNot(contains('SQLite format 3')));
-    final wrong = MemorySecureValues()
-      ..values[SecureAttendanceStore.encryptionKeyName] = '0' * 64;
-    await expectLater(open(keyStore: MemorySecureValues()), throwsStateError);
-    await expectLater(open(keyStore: wrong), throwsA(anything));
-    expect(await File(databasePath).readAsBytes(), bytes);
-    store = await open();
-    expect(store.readQueuedOffline().single.parameters, claim.parameters);
-  });
+  test(
+    'missing or wrong key preserves ciphertext and offline evidence',
+    () async {
+      final claim = capture(prepare(fixture), 'SYNTHETIC-SECRET-0001');
+      await store.close();
+      final bytes = await File(databasePath).readAsBytes();
+      expect(latin1.decode(bytes), isNot(contains(claim.studentId)));
+      expect(latin1.decode(bytes), isNot(contains('SQLite format 3')));
+      final wrong = MemorySecureValues()
+        ..values[SecureAttendanceStore.encryptionKeyName] = '0' * 64;
+      await expectLater(open(keyStore: MemorySecureValues()), throwsStateError);
+      await expectLater(open(keyStore: wrong), throwsA(anything));
+      expect(await File(databasePath).readAsBytes(), bytes);
+      store = await open();
+      expect(store.readQueuedOffline().single.parameters, claim.parameters);
+    },
+  );
 
-  test('online pending and terminal conflict cannot be bypassed offline', () async {
-    final guard = prepare(fixture);
-    final pending = await store.createPending(
-      eventId: eventId,
-      checkpointId: checkpointId,
-      studentId: '00000123456',
-    );
-    expect(
-      () => capture(guard, 'SYNTHETIC-OTHER'),
-      throwsA(isA<OfflineCaptureException>()),
-    );
-    await store.markBlocked(pending.scanId);
-    expect(
-      () => capture(guard, '00000123456'),
-      throwsA(isA<OfflineCaptureException>()),
-    );
-    final offline = capture(guard, 'SYNTHETIC-OTHER');
-    await expectLater(
-      store.createPending(
+  test(
+    'online pending and terminal conflict cannot be bypassed offline',
+    () async {
+      final guard = prepare(fixture);
+      final pending = await store.createPending(
         eventId: eventId,
         checkpointId: checkpointId,
-        studentId: offline.studentId,
-      ),
-      throwsStateError,
-    );
-    expect(store.readQueuedOffline().single.id, offline.id);
-  });
+        studentId: '00000123456',
+      );
+      expect(
+        () => capture(guard, 'SYNTHETIC-OTHER'),
+        throwsA(isA<OfflineCaptureException>()),
+      );
+      await store.markBlocked(pending.scanId);
+      expect(
+        () => capture(guard, '00000123456'),
+        throwsA(isA<OfflineCaptureException>()),
+      );
+      final offline = capture(guard, 'SYNTHETIC-OTHER');
+      await expectLater(
+        store.createPending(
+          eventId: eventId,
+          checkpointId: checkpointId,
+          studentId: offline.studentId,
+        ),
+        throwsStateError,
+      );
+      expect(store.readQueuedOffline().single.id, offline.id);
+    },
+  );
 
   test(
     '2400 unresolved claims across accounts are retained without eviction',
     () async {
       final guard = prepare(fixture);
-      for (var index = 0; index < SecureAttendanceStore.offlineQueueCapacity; index++) {
+      for (
+        var index = 0;
+        index < SecureAttendanceStore.offlineQueueCapacity;
+        index++
+      ) {
         capture(guard, 'SYNTHETIC-$index');
       }
       final first = store.readQueuedOffline().first;

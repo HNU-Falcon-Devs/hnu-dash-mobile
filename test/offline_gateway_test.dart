@@ -43,10 +43,8 @@ void main() {
     studentId: student,
   );
 
-  Future<String> sync({bool Function()? continuing}) => gateway.syncOffline(
-    (_) {},
-    shouldContinue: continuing ?? () => true,
-  );
+  Future<String> sync({bool Function()? continuing}) =>
+      gateway.syncOffline((_) {}, shouldContinue: continuing ?? () => true);
 
   setUp(() async {
     directory = await Directory.systemTemp.createTemp('offline-gateway-');
@@ -56,10 +54,8 @@ void main() {
     onlineCalls = 0;
     gateway = SupabaseStaffScanGateway.test(
       currentStaffId: () => account,
-      currentSession: () async => StaffScanSession(
-        staffUserId: account,
-        accessToken: 'token-$account',
-      ),
+      currentSession: () async =>
+          StaffScanSession(staffUserId: account, accessToken: 'token-$account'),
       ingest: (_, _) async {
         onlineCalls++;
         throw TimeoutException('synthetic');
@@ -148,7 +144,8 @@ void main() {
     uploadHandler = (_, _) async => {'status': 'submitted'};
     await sync();
     expect(gateway.offlineCounts().queued, 2);
-    uploadHandler = (params, _) async => acknowledgement(params, replayed: true);
+    uploadHandler = (params, _) async =>
+        acknowledgement(params, replayed: true);
     await sync();
     expect(uploads, hasLength(4));
     expect(uploads[0], uploads[1]);
@@ -163,10 +160,8 @@ void main() {
     await prepare();
     queue('SYNTHETIC-A');
     queue('SYNTHETIC-B');
-    uploadHandler = (_, _) async => throw const PostgrestException(
-      message: 'conflict',
-      code: '23505',
-    );
+    uploadHandler = (_, _) async =>
+        throw const PostgrestException(message: 'conflict', code: '23505');
     await sync();
     expect(uploads, hasLength(1));
     expect(gateway.offlineCounts().blocked, 1);
@@ -214,7 +209,8 @@ void main() {
     await open(staffA);
     expect(gateway.offlineCounts().queued, 1);
     expect(gateway.activePreparation, isNull);
-    uploadHandler = (params, _) async => acknowledgement(params, replayed: true);
+    uploadHandler = (params, _) async =>
+        acknowledgement(params, replayed: true);
     await sync();
     expect(uploads[0], uploads[1]);
     expect(gateway.offlineCounts().submitted, 1);

@@ -221,11 +221,12 @@ class OfflineTimeGuard {
     }
     final upper = preparation.issued.add(
       Duration(
-        microseconds: math.max(
-          duration.inMicroseconds,
-          wallDuration.inMicroseconds,
-        ),
-      ) + tolerance,
+            microseconds: math.max(
+              duration.inMicroseconds,
+              wallDuration.inMicroseconds,
+            ),
+          ) +
+          tolerance,
     );
     final lower = preparation.issued.add(
       Duration(

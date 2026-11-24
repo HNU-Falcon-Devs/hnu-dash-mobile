@@ -74,10 +74,7 @@ void main() {
   });
 
   test('timestamps require valid calendar dates and explicit offsets', () {
-    expect(
-      offlineInstant('2026-11-24T09:00:00+08:00'),
-      fixture.issued,
-    );
+    expect(offlineInstant('2026-11-24T09:00:00+08:00'), fixture.issued);
     for (final value in [
       '2026-02-30T01:00:00Z',
       '2026-11-24T01:00:00',

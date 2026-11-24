@@ -111,16 +111,16 @@ class SupabaseStaffGateway implements StaffGateway {
     if (ids.isEmpty) return [];
     final rows = await client
         .from('events')
-        .select('id,title,starts_at,ends_at,state,offline_enabled,offline_upload_cutoff')
+        .select(
+          'id,title,starts_at,ends_at,state,offline_enabled,offline_upload_cutoff',
+        )
         .inFilter('id', ids)
         .order('starts_at');
     if (account != id) throw StateError('Session changed');
     return rows
         .map(
-          (row) => StaffEvent.fromJson(
-            row,
-            assignmentId: assignmentIds[row['id']],
-          ),
+          (row) =>
+              StaffEvent.fromJson(row, assignmentId: assignmentIds[row['id']]),
         )
         .toList();
   }
@@ -652,7 +652,8 @@ class _StaffWorkspaceState extends State<StaffWorkspace>
       if (preparation == null) {
         setState(() {
           _offlinePreparation = null;
-          _scanMessage = 'No valid offline time anchor. Reconnect and prepare again.';
+          _scanMessage =
+              'No valid offline time anchor. Reconnect and prepare again.';
         });
         return;
       }
@@ -680,7 +681,8 @@ class _StaffWorkspaceState extends State<StaffWorkspace>
       });
     } catch (_) {
       setState(() {
-        _scanMessage = 'Offline capture is unavailable. Check secure storage and sign-in.';
+        _scanMessage =
+            'Offline capture is unavailable. Check secure storage and sign-in.';
       });
     }
   }
@@ -759,7 +761,9 @@ class _StaffWorkspaceState extends State<StaffWorkspace>
               Text('Event: ${preparation.title}'),
               Text('Checkpoint: ${checkpoint.label} (${checkpoint.direction})'),
               Text('Student ID: ${maskStudentId(studentId)}'),
-              const Text('Save locally as unverified evidence, not attendance.'),
+              const Text(
+                'Save locally as unverified evidence, not attendance.',
+              ),
             ],
           ),
           actions: [
@@ -1050,10 +1054,7 @@ class _StaffWorkspaceState extends State<StaffWorkspace>
                     onTap: _scanBusy ? null : () => _open(event),
                   ),
                 ),
-            if (signedIn &&
-                !_offlineMode &&
-                _selected != null &&
-                !_busy) ...[
+            if (signedIn && !_offlineMode && _selected != null && !_busy) ...[
               Text(
                 'Checkpoints — ${_selected!.title}',
                 style: const TextStyle(fontSize: 20),
@@ -1090,9 +1091,8 @@ class _StaffWorkspaceState extends State<StaffWorkspace>
                   _selected!.uploadCutoff != null &&
                   _checkpoints.isNotEmpty)
                 OutlinedButton(
-                  onPressed: _scanStoreReady &&
-                          !_scanBusy &&
-                          !_hasUnresolvedScans
+                  onPressed:
+                      _scanStoreReady && !_scanBusy && !_hasUnresolvedScans
                       ? _prepareOffline
                       : null,
                   child: const Text('Prepare offline (online)'),
@@ -1200,8 +1200,8 @@ class _StaffWorkspaceState extends State<StaffWorkspace>
                       child: const Text('Previous claims'),
                     ),
                     TextButton(
-                      onPressed: _scanBusy ||
-                              _offlineOffset + 10 >= _offlineTotal
+                      onPressed:
+                          _scanBusy || _offlineOffset + 10 >= _offlineTotal
                           ? null
                           : () => _pageOfflineRecords(_offlineOffset + 10),
                       child: const Text('Next claims'),

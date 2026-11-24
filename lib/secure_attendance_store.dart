@@ -704,10 +704,14 @@ class SecureAttendanceStore {
           'Resolve or escalate the original evidence first.',
         );
       }
-      final count = _database.select(
-        "SELECT count(*) AS total FROM offline_claims "
-        "WHERE status != 'submitted';",
-      ).single['total'] as int;
+      final count =
+          _database
+                  .select(
+                    "SELECT count(*) AS total FROM offline_claims "
+                    "WHERE status != 'submitted';",
+                  )
+                  .single['total']
+              as int;
       if (count >= offlineQueueCapacity) {
         throw const OfflineCaptureException(
           'The unresolved offline queue is full. Sync or contact support before capturing again.',
@@ -802,9 +806,7 @@ class SecureAttendanceStore {
       'WHERE staff_user_id = ? GROUP BY status;',
       [staffUserId],
     );
-    final counts = {
-      for (final row in rows) row['status']: row['total'] as int,
-    };
+    final counts = {for (final row in rows) row['status']: row['total'] as int};
     return OfflineQueueCounts(
       counts['queued'] ?? 0,
       counts['submitted'] ?? 0,
