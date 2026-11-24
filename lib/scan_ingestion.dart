@@ -35,6 +35,7 @@ abstract interface class StaffScanGateway {
 abstract interface class OfflineScanGateway {
   OfflinePreparation? get activePreparation;
   void invalidateOffline();
+  bool canCaptureOffline(String preparationId, String checkpointId);
   Future<String> prepareOffline({
     required String eventId,
     required String assignmentId,
@@ -364,7 +365,17 @@ class SupabaseStaffScanGateway
   @override
   OfflinePreparation? get activePreparation {
     _ensureCurrentAccount();
-    return _offlineGuard?.preparation;
+    final guard = _offlineGuard;
+    return guard != null && guard.isLeaseUsable ? guard.preparation : null;
+  }
+
+  @override
+  bool canCaptureOffline(String preparationId, String checkpointId) {
+    _ensureCurrentAccount();
+    final guard = _offlineGuard;
+    return guard != null &&
+        guard.preparation.id == preparationId &&
+        guard.claimTime(checkpointId) != null;
   }
 
   @override
@@ -389,6 +400,12 @@ class SupabaseStaffScanGateway
     final staff = _staffUserId!;
     final prepare = _prepare;
     if (prepare == null) throw StateError('Offline preparation unavailable.');
+    final current = activePreparation;
+    if (current != null &&
+        current.eventId == eventId &&
+        current.assignmentId == assignmentId) {
+      return 'An existing preparation is active. Enter offline capture mode explicitly.';
+    }
     final epoch = ++_offlineEpoch;
     _offlineGuard = null;
 
