@@ -51,8 +51,11 @@ abstract interface class OfflineScanGateway {
     required String studentId,
   });
   OfflineQueueCounts offlineCounts();
-  List<OfflineClaim> recentOffline();
-  Future<String> syncOffline(void Function(OfflineQueueCounts) onProgress);
+  List<OfflineClaim> recentOffline({int offset = 0});
+  Future<String> syncOffline(
+    void Function(OfflineQueueCounts) onProgress, {
+    required bool Function() shouldContinue,
+  });
 }
 
 typedef CurrentStaffId = String? Function();
@@ -451,7 +454,8 @@ class SupabaseStaffScanGateway
           parsed.checkpoints.length != checkpoints.length ||
           !parsed.checkpoints.every(
             (c) => checkpoints.any(
-              (expected) => expected.id == c.id &&
+              (expected) =>
+                  expected.id == c.id &&
                   expected.label == c.label &&
                   expected.direction == c.direction &&
                   expected.opens == c.opens &&
@@ -525,15 +529,16 @@ class SupabaseStaffScanGateway
   }
 
   @override
-  List<OfflineClaim> recentOffline() {
+  List<OfflineClaim> recentOffline({int offset = 0}) {
     _ensureCurrentAccount();
-    return _store!.readRecentOffline();
+    return _store!.readRecentOffline(offset: offset);
   }
 
   @override
   Future<String> syncOffline(
-    void Function(OfflineQueueCounts) onProgress,
-  ) => _exclusive(() async {
+    void Function(OfflineQueueCounts) onProgress, {
+    required bool Function() shouldContinue,
+  }) => _exclusive(() async {
     _ensureCurrentAccount();
     final store = _store!;
     final staff = _staffUserId!;
@@ -544,6 +549,9 @@ class SupabaseStaffScanGateway
     final queued = store.readQueuedOffline();
     for (final claim in queued) {
       _ensureBoundAccount(store, staff);
+      if (!shouldContinue()) {
+        return 'Sync paused outside the foreground. Resume explicitly.';
+      }
       if (claim.staffId != staff) {
         throw StateError('Offline claim owner mismatch.');
       }
@@ -554,6 +562,9 @@ class SupabaseStaffScanGateway
             session.staffUserId != staff ||
             session.accessToken.isEmpty) {
           return 'Sync paused: sign in as the original Staff account. Saved evidence is retained.';
+        }
+        if (!shouldContinue()) {
+          return 'Sync paused outside the foreground. Resume explicitly.';
         }
         final response = await upload(claim.parameters, session.accessToken);
         _ensureBoundAccount(store, staff);

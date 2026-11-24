@@ -146,11 +146,33 @@ class SecureAttendanceStore {
   }
 
   static void _createSchema(Database database) {
-    final version = database.select('PRAGMA user_version;').single.values.single;
+    final version = database
+        .select('PRAGMA user_version;')
+        .single
+        .values
+        .single;
     if (version is! int || version < 0 || version > 2) {
       throw StateError('Unsupported encrypted attendance schema.');
     }
     database.execute('PRAGMA foreign_keys = ON;');
+    final tables = database
+        .select("SELECT name FROM sqlite_master WHERE type = 'table';")
+        .map((row) => row['name'])
+        .toSet();
+    if (version == 2) {
+      if (!tables.containsAll({
+        tableName,
+        'offline_requests',
+        'offline_preparations',
+        'offline_claims',
+      })) {
+        throw StateError('Encrypted attendance schema is incomplete.');
+      }
+      return;
+    }
+    if (version == 1 && !tables.contains(tableName)) {
+      throw StateError('Original encrypted attendance schema is incomplete.');
+    }
     database.execute('BEGIN IMMEDIATE;');
     try {
       database.execute('''
@@ -678,18 +700,24 @@ class SecureAttendanceStore {
         [staffUserId, preparation.eventId, checkpointId, studentId],
       );
       if (pending.isNotEmpty || conflict.isNotEmpty) {
-        throw const OfflineCaptureException('Resolve or escalate the original evidence first.');
+        throw const OfflineCaptureException(
+          'Resolve or escalate the original evidence first.',
+        );
       }
       final count = _database.select(
         "SELECT count(*) AS total FROM offline_claims "
         "WHERE status != 'submitted';",
       ).single['total'] as int;
       if (count >= offlineQueueCapacity) {
-        throw const OfflineCaptureException('The unresolved offline queue is full. Sync or contact support before capturing again.');
+        throw const OfflineCaptureException(
+          'The unresolved offline queue is full. Sync or contact support before capturing again.',
+        );
       }
       final claimedAt = guard.claimTime(checkpointId);
       if (claimedAt == null) {
-        throw const OfflineCaptureException('The capture window is not safely established. Reconnect and prepare again.');
+        throw const OfflineCaptureException(
+          'The capture window is not safely established. Reconnect and prepare again.',
+        );
       }
       final claim = OfflineClaim(
         id: const Uuid().v4(),
@@ -753,14 +781,15 @@ class SecureAttendanceStore {
         .toList();
   }
 
-  List<OfflineClaim> readRecentOffline() {
+  List<OfflineClaim> readRecentOffline({int offset = 0}) {
     _ensureOpen();
+    if (offset < 0) throw ArgumentError.value(offset, 'offset');
     return _database
         .select(
           "SELECT * FROM offline_claims WHERE staff_user_id = ? "
           "ORDER BY CASE WHEN status = 'blocked' THEN 0 ELSE 1 END, "
-          "rowid DESC LIMIT 10;",
-          [staffUserId],
+          "rowid DESC LIMIT 10 OFFSET ?;",
+          [staffUserId, offset],
         )
         .map(_offlineClaim)
         .toList();

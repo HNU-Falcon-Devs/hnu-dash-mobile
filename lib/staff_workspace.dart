@@ -185,11 +185,14 @@ class _StaffWorkspaceState extends State<StaffWorkspace>
   OfflineQueueCounts _offlineCounts = const OfflineQueueCounts(0, 0, 0);
   List<OfflineClaim> _offlineRecords = [];
   bool _offlineMode = false;
+  bool _foreground = true;
+  int _syncEpoch = 0;
+  int _offlineOffset = 0;
   Timer? _offlineTimer;
 
   OfflineScanGateway? get _offlineGateway {
-    final gateway = widget.scanGateway;
-    return gateway is OfflineScanGateway ? gateway as OfflineScanGateway : null;
+    final Object? gateway = widget.scanGateway;
+    return gateway is OfflineScanGateway ? gateway : null;
   }
 
   List<ScanRecord> _scanRecords = [];
@@ -217,7 +220,11 @@ class _StaffWorkspaceState extends State<StaffWorkspace>
 
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
-    if (state != AppLifecycleState.resumed) return;
+    _foreground = state == AppLifecycleState.resumed;
+    if (!_foreground) {
+      _syncEpoch++;
+      return;
+    }
     if (widget.gateway.account != _account) {
       _onAuth(widget.gateway.account);
     } else if (_account != null) {
@@ -230,6 +237,7 @@ class _StaffWorkspaceState extends State<StaffWorkspace>
     _epoch++;
     _scanEpoch++;
     _accountEpoch++;
+    _syncEpoch++;
     _offlineTimer?.cancel();
     setState(() {
       _events = [];
@@ -249,6 +257,7 @@ class _StaffWorkspaceState extends State<StaffWorkspace>
       _offlineCheckpoint = null;
       _offlineCounts = const OfflineQueueCounts(0, 0, 0);
       _offlineRecords = [];
+      _offlineOffset = 0;
     });
   }
 
@@ -310,6 +319,7 @@ class _StaffWorkspaceState extends State<StaffWorkspace>
         _scanStoreReady = true;
         _offlineCounts = counts ?? const OfflineQueueCounts(0, 0, 0);
         _offlineRecords = offlineRecords ?? [];
+        _offlineOffset = 0;
         _offlinePreparation = preparation;
       });
     } catch (_) {
@@ -338,6 +348,7 @@ class _StaffWorkspaceState extends State<StaffWorkspace>
         _hasUnresolvedScans = unresolved;
         _offlineCounts = counts ?? const OfflineQueueCounts(0, 0, 0);
         _offlineRecords = offlineRecords ?? [];
+        _offlineOffset = 0;
         _offlinePreparation = preparation;
         if (preparation == null) {
           _offlineMode = false;
@@ -381,7 +392,8 @@ class _StaffWorkspaceState extends State<StaffWorkspace>
       final prepared = _offlinePreparation;
       if (prepared != null &&
           !items.any(
-            (event) => event.id == prepared.eventId &&
+            (event) =>
+                event.id == prepared.eventId &&
                 event.assignmentId == prepared.assignmentId &&
                 event.state == 'OPEN' &&
                 event.offlineEnabled &&
@@ -404,7 +416,7 @@ class _StaffWorkspaceState extends State<StaffWorkspace>
 
   Future<void> _open(StaffEvent event) async {
     final id = _account;
-    if (id == null || _offlineMode || _scanBusy || _busy) return;
+    if (id == null || _offlineMode || _scanBusy) return;
     final version = ++_epoch;
     setState(() {
       _selected = event;
@@ -792,8 +804,10 @@ class _StaffWorkspaceState extends State<StaffWorkspace>
     final gateway = _offlineGateway;
     final account = _account;
     final generation = _accountEpoch;
+    final syncEpoch = _syncEpoch;
     if (gateway == null ||
         account == null ||
+        !_foreground ||
         !_scanStoreReady ||
         _scanBusy ||
         _offlineCounts.queued == 0) {
@@ -804,10 +818,16 @@ class _StaffWorkspaceState extends State<StaffWorkspace>
       _scanMessage = null;
     });
     try {
-      final message = await gateway.syncOffline((counts) {
-        if (!_validScanAccount(account, generation)) return;
-        setState(() => _offlineCounts = counts);
-      });
+      final message = await gateway.syncOffline(
+        (counts) {
+          if (!_validScanAccount(account, generation)) return;
+          setState(() => _offlineCounts = counts);
+        },
+        shouldContinue: () =>
+            _foreground &&
+            _syncEpoch == syncEpoch &&
+            _validScanAccount(account, generation),
+      );
       if (!_validScanAccount(account, generation)) return;
       setState(() => _scanMessage = message);
       await _refreshScanRecords(account);
@@ -821,6 +841,24 @@ class _StaffWorkspaceState extends State<StaffWorkspace>
       if (_validScanAccount(account, generation)) {
         setState(() => _scanBusy = false);
       }
+    }
+  }
+
+  int get _offlineTotal =>
+      _offlineCounts.queued + _offlineCounts.submitted + _offlineCounts.blocked;
+
+  void _pageOfflineRecords(int offset) {
+    if (_scanBusy || offset < 0 || offset >= _offlineTotal) return;
+    try {
+      final records = _offlineGateway!.recentOffline(offset: offset);
+      setState(() {
+        _offlineRecords = records;
+        _offlineOffset = offset;
+      });
+    } catch (_) {
+      setState(() {
+        _scanMessage = 'Offline evidence could not be reloaded securely.';
+      });
     }
   }
 
@@ -985,8 +1023,10 @@ class _StaffWorkspaceState extends State<StaffWorkspace>
                   ),
                 ),
               ),
-              const Text('Assigned events', style: TextStyle(fontSize: 24)),
-              const Text('Read-only • Asia/Manila'),
+              if (!_offlineMode) ...[
+                const Text('Assigned events', style: TextStyle(fontSize: 24)),
+                const Text('Read-only • Asia/Manila'),
+              ],
             ],
             if (_busy) const Center(child: CircularProgressIndicator()),
             if (_error != null) ...[
@@ -1063,17 +1103,29 @@ class _StaffWorkspaceState extends State<StaffWorkspace>
                   label: const Text('Scan Student ID'),
                 ),
             ],
+            if (signedIn && _scanBusy) const LinearProgressIndicator(),
+            if (signedIn && _scanMessage != null)
+              Semantics(
+                liveRegion: true,
+                child: Text(
+                  _scanMessage!,
+                  key: const Key('scan-result-message'),
+                ),
+              ),
             if (signedIn && _scanStoreReady && _offlineGateway != null) ...[
               const SizedBox(height: 16),
               const Text(
                 'Offline evidence — synthetic only',
                 style: TextStyle(fontSize: 20),
               ),
-              Text(
-                'Locally queued: ${_offlineCounts.queued} • '
-                'Submitted for review: ${_offlineCounts.submitted} • '
-                'Blocked: ${_offlineCounts.blocked}',
-                key: const Key('offline-queue-counts'),
+              Semantics(
+                liveRegion: true,
+                child: Text(
+                  'Locally queued: ${_offlineCounts.queued} • '
+                  'Submitted for review: ${_offlineCounts.submitted} • '
+                  'Blocked: ${_offlineCounts.blocked}',
+                  key: const Key('offline-queue-counts'),
+                ),
               ),
               const Text(
                 'These are local account counts, not official attendance or completion.',
@@ -1131,9 +1183,31 @@ class _StaffWorkspaceState extends State<StaffWorkspace>
                     : () => _refreshScanRecords(_account!),
                 child: const Text('Reload local evidence'),
               ),
-              if (_offlineRecords.isNotEmpty)
-                const Text('Recent offline claims (blocked first)'),
-              for (final claim in _offlineRecords) _offlineRecordCard(claim),
+              if (_offlineRecords.isNotEmpty) ...[
+                Text(
+                  'Offline claims ${_offlineOffset + 1}–'
+                  '${_offlineOffset + _offlineRecords.length} of $_offlineTotal '
+                  '(blocked first)',
+                ),
+                for (final claim in _offlineRecords) _offlineRecordCard(claim),
+                Row(
+                  children: [
+                    TextButton(
+                      onPressed: _scanBusy || _offlineOffset == 0
+                          ? null
+                          : () => _pageOfflineRecords(_offlineOffset - 10),
+                      child: const Text('Previous claims'),
+                    ),
+                    TextButton(
+                      onPressed: _scanBusy ||
+                              _offlineOffset + 10 >= _offlineTotal
+                          ? null
+                          : () => _pageOfflineRecords(_offlineOffset + 10),
+                      child: const Text('Next claims'),
+                    ),
+                  ],
+                ),
+              ],
             ],
             if (signedIn && _scanStoreError != null)
               Text(_scanStoreError!, key: const Key('scan-store-error')),
@@ -1146,9 +1220,6 @@ class _StaffWorkspaceState extends State<StaffWorkspace>
               const Text(
                 'Retry the pending attempt before scanning another ID. Blocked conflicts remain saved for support; only unrelated captures may continue.',
               ),
-            if (signedIn && _scanBusy) const LinearProgressIndicator(),
-            if (signedIn && _scanMessage != null)
-              Text(_scanMessage!, key: const Key('scan-result-message')),
             if (signedIn && _scanStoreReady && _scanRecords.isNotEmpty) ...[
               const SizedBox(height: 16),
               const Text(
