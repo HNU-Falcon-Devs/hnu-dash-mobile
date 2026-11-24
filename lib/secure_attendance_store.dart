@@ -546,7 +546,10 @@ class SecureAttendanceStore {
   static const offlineQueueCapacity = 2400;
 
   /// Retain the original request UUID until a validated response is stored.
-  String offlineRequest(String eventId, String assignmentId) {
+  ({String id, bool created}) offlineRequest(
+    String eventId,
+    String assignmentId,
+  ) {
     _ensureOpen();
     offlineUuid(staffUserId);
     offlineUuid(eventId);
@@ -575,7 +578,7 @@ class SecureAttendanceStore {
         );
       }
       _database.execute('COMMIT;');
-      return id;
+      return (id: id, created: rows.isEmpty);
     } catch (_) {
       _database.execute('ROLLBACK;');
       rethrow;
@@ -675,18 +678,18 @@ class SecureAttendanceStore {
         [staffUserId, preparation.eventId, checkpointId, studentId],
       );
       if (pending.isNotEmpty || conflict.isNotEmpty) {
-        throw StateError('Resolve or escalate the original evidence first.');
+        throw const OfflineCaptureException('Resolve or escalate the original evidence first.');
       }
       final count = _database.select(
         "SELECT count(*) AS total FROM offline_claims "
         "WHERE status != 'submitted';",
       ).single['total'] as int;
       if (count >= offlineQueueCapacity) {
-        throw StateError('The unresolved offline queue is full.');
+        throw const OfflineCaptureException('The unresolved offline queue is full. Sync or contact support before capturing again.');
       }
       final claimedAt = guard.claimTime(checkpointId);
       if (claimedAt == null) {
-        throw StateError('Offline capture window is not safely established.');
+        throw const OfflineCaptureException('The capture window is not safely established. Reconnect and prepare again.');
       }
       final claim = OfflineClaim(
         id: const Uuid().v4(),

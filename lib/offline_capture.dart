@@ -229,6 +229,12 @@ class OfflineTimeGuard {
   }
 }
 
+class OfflineCaptureException implements Exception {
+  const OfflineCaptureException(this.message);
+
+  final String message;
+}
+
 enum OfflineClaimStatus { queued, submitted, blocked }
 
 class OfflineClaim {
