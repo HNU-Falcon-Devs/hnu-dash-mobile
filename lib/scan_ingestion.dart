@@ -2,6 +2,7 @@ import 'package:flutter/foundation.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
 import 'development_scan_policy.dart';
+import 'offline_capture.dart';
 import 'secure_attendance_store.dart';
 import 'secure_value_store.dart';
 
@@ -28,6 +29,35 @@ abstract interface class StaffScanGateway {
     required String studentId,
   });
   Future<ScanAttemptResult> retry(String scanId);
+}
+
+/// Separate opt-in path; the existing online interface remains unchanged.
+abstract interface class OfflineScanGateway {
+  OfflinePreparation? get activePreparation;
+  void invalidateOffline();
+  bool canCaptureOffline(String preparationId, String checkpointId);
+  Future<String> prepareOffline({
+    required String eventId,
+    required String assignmentId,
+    required String title,
+    required DateTime starts,
+    required DateTime ends,
+    required DateTime cutoff,
+    required List<OfflineCheckpoint> checkpoints,
+  });
+  OfflineClaim captureOffline({
+    required String preparationId,
+    required String checkpointId,
+    required String studentId,
+  });
+  OfflineQueueCounts offlineCounts();
+  List<OfflineSyncGroup> offlineSyncGroups();
+  List<OfflineClaim> recentOffline({int offset = 0});
+  Future<String> syncOffline(
+    void Function(OfflineQueueCounts) onProgress, {
+    required String preparationId,
+    required bool Function() shouldContinue,
+  });
 }
 
 typedef CurrentStaffId = String? Function();
@@ -59,11 +89,27 @@ Future<dynamic> submitPinnedAttendanceRpc(
 ) => client
     .rpc('ingest_attendance_scan', params: parameters)
     .setHeader('Authorization', 'Bearer $accessToken');
+Future<dynamic> preparePinnedOfflineRpc(
+  SupabaseClient client,
+  Map<String, dynamic> parameters,
+  String accessToken,
+) => client
+    .rpc('prepare_offline_capture', params: parameters)
+    .setHeader('Authorization', 'Bearer $accessToken');
+
+Future<dynamic> submitPinnedOfflineRpc(
+  SupabaseClient client,
+  Map<String, dynamic> parameters,
+  String accessToken,
+) => client
+    .rpc('submit_offline_capture', params: parameters)
+    .setHeader('Authorization', 'Bearer $accessToken');
+
 typedef AttendanceStoreOpener = Future<SecureAttendanceStore> Function(
   String staffUserId,
 );
 
-class SupabaseStaffScanGateway implements StaffScanGateway {
+class SupabaseStaffScanGateway implements StaffScanGateway, OfflineScanGateway {
   SupabaseStaffScanGateway.forSupabase(
     SupabaseClient client, {
     required SecureValueStore secureValues,
@@ -79,6 +125,10 @@ class SupabaseStaffScanGateway implements StaffScanGateway {
          },
          ingest: (parameters, token) =>
              submitPinnedAttendanceRpc(client, parameters, token),
+         prepare: (parameters, token) =>
+             preparePinnedOfflineRpc(client, parameters, token),
+         upload: (parameters, token) =>
+             submitPinnedOfflineRpc(client, parameters, token),
          openStore: (staffUserId) => SecureAttendanceStore.openOnDevice(
            staffUserId: staffUserId,
            keyStore: secureValues,
@@ -91,10 +141,14 @@ class SupabaseStaffScanGateway implements StaffScanGateway {
     required CurrentStaffSession currentSession,
     required AttendanceScanRpc ingest,
     required AttendanceStoreOpener openStore,
+    AttendanceScanRpc? prepare,
+    AttendanceScanRpc? upload,
   }) : this._(
          currentStaffId: currentStaffId,
          currentSession: currentSession,
          ingest: ingest,
+         prepare: prepare,
+         upload: upload,
          openStore: openStore,
        );
 
@@ -102,15 +156,37 @@ class SupabaseStaffScanGateway implements StaffScanGateway {
     required this._currentStaffId,
     required this._currentSession,
     required this._ingest,
+    required this._prepare,
+    required this._upload,
     required this._openStore,
   });
 
   final CurrentStaffId _currentStaffId;
   final CurrentStaffSession _currentSession;
   final AttendanceScanRpc _ingest;
+  final AttendanceScanRpc? _prepare, _upload;
   final AttendanceStoreOpener _openStore;
   SecureAttendanceStore? _store;
   String? _staffUserId;
+  int _bindingEpoch = 0;
+  Future<void> _opening = Future<void>.value();
+  Object? _operation;
+  int _offlineEpoch = 0;
+  OfflineTimeGuard? _offlineGuard;
+  final _requestClocks = <String, _PreparationClock>{};
+
+  Future<T> _exclusive<T>(Future<T> Function() action) async {
+    if (_operation != null) {
+      throw StateError('Another attendance operation is in progress.');
+    }
+    final token = Object();
+    _operation = token;
+    try {
+      return await action();
+    } finally {
+      if (identical(_operation, token)) _operation = null;
+    }
+  }
 
   @override
   Future<void> openForAccount(String staffUserId) async {
@@ -119,18 +195,30 @@ class SupabaseStaffScanGateway implements StaffScanGateway {
     }
     if (_staffUserId == staffUserId && _store != null) return;
 
-    await close();
-    final store = await _openStore(staffUserId);
-    if (_currentStaffId() != staffUserId) {
-      await store.close();
-      throw StateError('The authenticated Staff account changed.');
-    }
-    _store = store;
-    _staffUserId = staffUserId;
+    final closing = close();
+    final generation = _bindingEpoch;
+    await closing;
+    final opening = _opening.then((_) async {
+      if (generation != _bindingEpoch) {
+        throw StateError('The authenticated Staff account changed.');
+      }
+      final store = await _openStore(staffUserId);
+      if (generation != _bindingEpoch || _currentStaffId() != staffUserId) {
+        await store.close();
+        throw StateError('The authenticated Staff account changed.');
+      }
+      _store = store;
+      _staffUserId = staffUserId;
+    });
+    _opening = opening.then<void>((_) {}, onError: (Object _) {});
+    await opening;
   }
 
   @override
   Future<void> close() async {
+    _bindingEpoch++;
+    invalidateOffline();
+    _operation = null;
     final store = _store;
     _store = null;
     _staffUserId = null;
@@ -151,6 +239,18 @@ class SupabaseStaffScanGateway implements StaffScanGateway {
 
   @override
   Future<ScanAttemptResult> capture({
+    required String eventId,
+    required String checkpointId,
+    required String studentId,
+  }) => _exclusive(
+    () => _captureOnline(
+      eventId: eventId,
+      checkpointId: checkpointId,
+      studentId: studentId,
+    ),
+  );
+
+  Future<ScanAttemptResult> _captureOnline({
     required String eventId,
     required String checkpointId,
     required String studentId,
@@ -190,7 +290,10 @@ class SupabaseStaffScanGateway implements StaffScanGateway {
   }
 
   @override
-  Future<ScanAttemptResult> retry(String scanId) async {
+  Future<ScanAttemptResult> retry(String scanId) =>
+      _exclusive(() => _retryOnline(scanId));
+
+  Future<ScanAttemptResult> _retryOnline(String scanId) async {
     _ensureCurrentAccount();
     final store = _store!;
     final staffUserId = _staffUserId!;
@@ -276,6 +379,246 @@ class SupabaseStaffScanGateway implements StaffScanGateway {
       return _pendingResult(record);
     }
   }
+
+  @override
+  OfflinePreparation? get activePreparation {
+    _ensureCurrentAccount();
+    final guard = _offlineGuard;
+    return guard != null && guard.isLeaseUsable ? guard.preparation : null;
+  }
+
+  @override
+  bool canCaptureOffline(String preparationId, String checkpointId) {
+    _ensureCurrentAccount();
+    final guard = _offlineGuard;
+    return guard != null &&
+        guard.preparation.id == preparationId &&
+        guard.claimTime(checkpointId) != null;
+  }
+
+  @override
+  void invalidateOffline() {
+    _offlineEpoch++;
+    _offlineGuard = null;
+    _requestClocks.clear();
+  }
+
+  @override
+  Future<String> prepareOffline({
+    required String eventId,
+    required String assignmentId,
+    required String title,
+    required DateTime starts,
+    required DateTime ends,
+    required DateTime cutoff,
+    required List<OfflineCheckpoint> checkpoints,
+  }) => _exclusive(() async {
+    _ensureCurrentAccount();
+    final store = _store!;
+    final staff = _staffUserId!;
+    final prepare = _prepare;
+    if (prepare == null) throw StateError('Offline preparation unavailable.');
+    final current = activePreparation;
+    if (current != null &&
+        current.eventId == eventId &&
+        current.assignmentId == assignmentId) {
+      return 'An existing preparation is active. Enter offline capture mode explicitly.';
+    }
+    final epoch = ++_offlineEpoch;
+    _offlineGuard = null;
+
+    void ensureContext() {
+      _ensureBoundAccount(store, staff);
+      if (epoch != _offlineEpoch) {
+        throw StateError('Offline preparation context changed.');
+      }
+    }
+
+    try {
+      if (await store.hasUnresolvedRecords()) {
+        ensureContext();
+        return 'Resolve the pending online attempt before preparing offline.';
+      }
+      ensureContext();
+      final request = store.offlineRequest(eventId, assignmentId);
+      final session = await _currentSession();
+      ensureContext();
+      if (session == null ||
+          session.staffUserId != staff ||
+          session.accessToken.isEmpty) {
+        throw StateError('The preparation session does not match its owner.');
+      }
+      final dispatch = _PreparationClock();
+      if (request.created) _requestClocks[request.id] = dispatch;
+      final response = await prepare({
+        'p_event_id': eventId,
+        'p_request_id': request.id,
+      }, session.accessToken);
+      ensureContext();
+      final parsed = OfflinePreparation.parse(
+        response,
+        eventId: eventId,
+        assignmentId: assignmentId,
+        staffId: staff,
+        requestId: request.id,
+      );
+      if (parsed.title != title ||
+          parsed.starts != starts.toUtc() ||
+          parsed.ends != ends.toUtc() ||
+          parsed.cutoff != cutoff.toUtc() ||
+          parsed.checkpoints.length != checkpoints.length ||
+          !parsed.checkpoints.every(
+            (c) => checkpoints.any(
+              (expected) =>
+                  expected.id == c.id &&
+                  expected.label == c.label &&
+                  expected.direction == c.direction &&
+                  expected.opens == c.opens &&
+                  expected.closes == c.closes,
+            ),
+          )) {
+        throw const FormatException('Preparation schedule changed.');
+      }
+      store.saveOfflinePreparation(parsed);
+      final original = _requestClocks.remove(request.id);
+      // A fresh issuance can use the current dispatch. An identical replay
+      // needs the original dispatch from this account's uninterrupted process.
+      final anchor = parsed.replayed ? original : dispatch;
+      if (anchor == null) {
+        return 'Original preparation recovered without a safe time anchor. Existing evidence is retained; prepare again when the old lease expires.';
+      }
+      _offlineGuard = OfflineTimeGuard(
+        preparation: parsed,
+        elapsed: () => anchor.stopwatch.elapsed,
+        wallNow: () => DateTime.now().toUtc(),
+        requestWall: anchor.wall,
+        receivedElapsed: anchor.stopwatch.elapsed,
+      );
+      return 'Offline preparation saved. Enter offline capture mode explicitly.';
+    } on PostgrestException catch (error) {
+      ensureContext();
+      if (error.code == '42501') {
+        invalidateOffline();
+        return 'Offline access could not be verified. Refresh assignments or contact support.';
+      }
+      if (error.code == '55000') {
+        return 'A new preparation is not currently permitted. An earlier preparation may still be active; refresh and retry explicitly.';
+      }
+      return 'No valid preparation was confirmed. The request ID is retained; retry the same request or contact support.';
+    } catch (_) {
+      ensureContext();
+      return 'No valid preparation was confirmed. The request ID is retained; retry explicitly.';
+    }
+  });
+
+  @override
+  OfflineClaim captureOffline({
+    required String preparationId,
+    required String checkpointId,
+    required String studentId,
+  }) {
+    _ensureCurrentAccount();
+    if (_operation != null) {
+      throw StateError('Another attendance operation is in progress.');
+    }
+    final store = _store!;
+    final staff = _staffUserId!;
+    final guard = _offlineGuard;
+    if (guard == null || guard.preparation.id != preparationId) {
+      throw const OfflineCaptureException(
+        'No safely prepared offline context. Reconnect and prepare again.',
+      );
+    }
+    _ensureBoundAccount(store, staff);
+    return store.createOfflineClaim(
+      guard: guard,
+      checkpointId: checkpointId,
+      studentId: studentId,
+    );
+  }
+
+  @override
+  OfflineQueueCounts offlineCounts() {
+    _ensureCurrentAccount();
+    return _store!.offlineCounts();
+  }
+
+  @override
+  List<OfflineSyncGroup> offlineSyncGroups() {
+    _ensureCurrentAccount();
+    return _store!.offlineSyncGroups();
+  }
+
+  @override
+  List<OfflineClaim> recentOffline({int offset = 0}) {
+    _ensureCurrentAccount();
+    return _store!.readRecentOffline(offset: offset);
+  }
+
+  @override
+  Future<String> syncOffline(
+    void Function(OfflineQueueCounts) onProgress, {
+    required String preparationId,
+    required bool Function() shouldContinue,
+  }) => _exclusive(() async {
+    _ensureCurrentAccount();
+    final store = _store!;
+    final staff = _staffUserId!;
+    final upload = _upload;
+    if (upload == null) throw StateError('Offline upload unavailable.');
+    // Snapshot only the explicitly selected preparation for this owner.
+    // Do not filter by client time: an authorized replay can outlive expiry.
+    final queued = store.readQueuedOffline(preparationId);
+    if (queued.isEmpty) {
+      return 'No queued claims for this preparation. Reload local evidence.';
+    }
+    for (final claim in queued) {
+      _ensureBoundAccount(store, staff);
+      if (!shouldContinue()) {
+        return 'Sync paused outside the foreground. Resume explicitly.';
+      }
+      if (claim.staffId != staff || claim.preparationId != preparationId) {
+        throw StateError('Offline claim owner mismatch.');
+      }
+      try {
+        final session = await _currentSession();
+        _ensureBoundAccount(store, staff);
+        if (session == null ||
+            session.staffUserId != staff ||
+            session.accessToken.isEmpty) {
+          return 'Sync paused: sign in as the original Staff account. Saved evidence is retained.';
+        }
+        if (!shouldContinue()) {
+          return 'Sync paused outside the foreground. Resume explicitly.';
+        }
+        final response = await upload(claim.parameters, session.accessToken);
+        _ensureBoundAccount(store, staff);
+        final acknowledgement = OfflineAcknowledgement.parse(response, claim);
+        store.acknowledgeOffline(claim, acknowledgement);
+        onProgress(store.offlineCounts());
+      } on PostgrestException catch (error) {
+        _ensureBoundAccount(store, staff);
+        if (error.code == '23505' || error.code == '22023') {
+          store.blockOffline(claim);
+          onProgress(store.offlineCounts());
+          return 'Sync paused: immutable evidence conflicts or is invalid. Contact support with the capture UUID; do not replace it.';
+        }
+        if (error.code == '42501') {
+          invalidateOffline();
+          return 'Sync paused: access could not be verified. Sign in again or contact support.';
+        }
+        if (error.code == '55000') {
+          invalidateOffline();
+          return 'Sync paused: the server is not accepting this claim. Contact support; the original UUID is retained.';
+        }
+        return 'Sync paused: no durable acknowledgement confirmed. Retry the original queued claim explicitly.';
+      } catch (_) {
+        _ensureBoundAccount(store, staff);
+        return 'Sync paused: no durable acknowledgement confirmed. Retry the original queued claim explicitly.';
+      }
+    }
+    return 'Selected preparation upload pass finished. Submitted claims await review; other evidence is unchanged.';
+  });
 
   ScanAttemptResult _pendingResult(ScanRecord record) => ScanAttemptResult(
     record: record,
@@ -435,4 +778,9 @@ class _ParsedReceipt {
   final ScanStatus outcome;
   final String receivedAt;
   final bool replayed;
+}
+
+class _PreparationClock {
+  final wall = DateTime.now().toUtc();
+  final stopwatch = Stopwatch()..start();
 }

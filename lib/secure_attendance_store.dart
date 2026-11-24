@@ -1,3 +1,4 @@
+import 'dart:convert';
 import 'dart:io';
 import 'dart:math';
 
@@ -8,6 +9,7 @@ import 'package:sqlite3/sqlite3.dart';
 import 'package:uuid/uuid.dart';
 
 import 'development_scan_policy.dart';
+import 'offline_capture.dart';
 import 'secure_value_store.dart';
 
 enum ScanStatus { pending, accepted, rejected, duplicate, blocked, legacy }
@@ -144,35 +146,117 @@ class SecureAttendanceStore {
   }
 
   static void _createSchema(Database database) {
-    database.execute('''
-      CREATE TABLE IF NOT EXISTS $tableName (
-        scan_id TEXT PRIMARY KEY,
-        event_id TEXT NOT NULL,
-        checkpoint_id TEXT,
-        student_id TEXT NOT NULL,
-        staff_user_id TEXT,
-        submission_status TEXT NOT NULL
-          CHECK (submission_status IN (
-            'pending', 'accepted', 'rejected', 'duplicate', 'blocked', 'legacy'
-          )),
-        received_at TEXT,
-        replayed INTEGER CHECK (replayed IN (0, 1)),
-        legacy INTEGER NOT NULL DEFAULT 0 CHECK (legacy IN (0, 1)),
-        legacy_status TEXT,
-        CHECK (
-          (legacy = 1 AND staff_user_id IS NULL AND checkpoint_id IS NULL
-            AND submission_status = 'legacy')
-          OR
-          (legacy = 0 AND staff_user_id IS NOT NULL AND checkpoint_id IS NOT NULL
-            AND submission_status != 'legacy')
-        )
-      );
-    ''');
-    database.execute('''
-      CREATE INDEX IF NOT EXISTS attendance_scans_staff_status
-      ON $tableName(staff_user_id, submission_status, legacy);
-    ''');
-    database.execute('PRAGMA user_version = 1;');
+    final version = database
+        .select('PRAGMA user_version;')
+        .single
+        .values
+        .single;
+    if (version is! int || version < 0 || version > 2) {
+      throw StateError('Unsupported encrypted attendance schema.');
+    }
+    database.execute('PRAGMA foreign_keys = ON;');
+    final tables = database
+        .select("SELECT name FROM sqlite_master WHERE type = 'table';")
+        .map((row) => row['name'])
+        .toSet();
+    if (version == 2) {
+      if (!tables.containsAll({
+        tableName,
+        'offline_requests',
+        'offline_preparations',
+        'offline_claims',
+      })) {
+        throw StateError('Encrypted attendance schema is incomplete.');
+      }
+      return;
+    }
+    if (version == 1 && !tables.contains(tableName)) {
+      throw StateError('Original encrypted attendance schema is incomplete.');
+    }
+    database.execute('BEGIN IMMEDIATE;');
+    try {
+      database.execute('''
+        CREATE TABLE IF NOT EXISTS $tableName (
+          scan_id TEXT PRIMARY KEY,
+          event_id TEXT NOT NULL,
+          checkpoint_id TEXT,
+          student_id TEXT NOT NULL,
+          staff_user_id TEXT,
+          submission_status TEXT NOT NULL
+            CHECK (submission_status IN (
+              'pending', 'accepted', 'rejected', 'duplicate', 'blocked', 'legacy'
+            )),
+          received_at TEXT,
+          replayed INTEGER CHECK (replayed IN (0, 1)),
+          legacy INTEGER NOT NULL DEFAULT 0 CHECK (legacy IN (0, 1)),
+          legacy_status TEXT,
+          CHECK (
+            (legacy = 1 AND staff_user_id IS NULL AND checkpoint_id IS NULL
+              AND submission_status = 'legacy')
+            OR
+            (legacy = 0 AND staff_user_id IS NOT NULL AND checkpoint_id IS NOT NULL
+              AND submission_status != 'legacy')
+          )
+        );
+      ''');
+      database.execute('''
+        CREATE INDEX IF NOT EXISTS attendance_scans_staff_status
+        ON $tableName(staff_user_id, submission_status, legacy);
+      ''');
+      database.execute('''
+        CREATE TABLE IF NOT EXISTS offline_requests (
+          request_id TEXT PRIMARY KEY,
+          staff_user_id TEXT NOT NULL,
+          event_id TEXT NOT NULL,
+          assignment_id TEXT NOT NULL,
+          resolved INTEGER NOT NULL DEFAULT 0 CHECK (resolved IN (0,1))
+        );
+      ''');
+      database.execute('''
+        CREATE UNIQUE INDEX IF NOT EXISTS offline_pending_request
+        ON offline_requests(staff_user_id,event_id,assignment_id)
+        WHERE resolved = 0;
+      ''');
+      database.execute('''
+        CREATE TABLE IF NOT EXISTS offline_preparations (
+          preparation_id TEXT PRIMARY KEY,
+          request_id TEXT NOT NULL UNIQUE REFERENCES offline_requests(request_id),
+          staff_user_id TEXT NOT NULL,
+          event_id TEXT NOT NULL,
+          context TEXT NOT NULL,
+          UNIQUE (preparation_id,staff_user_id,event_id)
+        );
+      ''');
+      database.execute('''
+        CREATE TABLE IF NOT EXISTS offline_claims (
+          capture_id TEXT PRIMARY KEY,
+          preparation_id TEXT NOT NULL,
+          staff_user_id TEXT NOT NULL,
+          event_id TEXT NOT NULL,
+          checkpoint_id TEXT NOT NULL,
+          student_id TEXT NOT NULL,
+          claimed_at TEXT NOT NULL,
+          status TEXT NOT NULL CHECK (status IN ('queued','submitted','blocked')),
+          received_at TEXT,
+          replayed INTEGER CHECK (replayed IN (0,1)),
+          FOREIGN KEY (preparation_id,staff_user_id,event_id)
+            REFERENCES offline_preparations(preparation_id,staff_user_id,event_id),
+          CHECK (
+            (status = 'submitted' AND received_at IS NOT NULL AND replayed IS NOT NULL)
+            OR (status != 'submitted' AND received_at IS NULL AND replayed IS NULL)
+          )
+        );
+      ''');
+      database.execute('''
+        CREATE INDEX IF NOT EXISTS offline_claims_owner_status
+        ON offline_claims(staff_user_id,status);
+      ''');
+      database.execute('PRAGMA user_version = 2;');
+      database.execute('COMMIT;');
+    } catch (_) {
+      database.execute('ROLLBACK;');
+      rethrow;
+    }
   }
 
   Future<void> _migrateLegacy(File legacyFile) async {
@@ -331,9 +415,17 @@ class SecureAttendanceStore {
     ''',
       [staffUserId, eventId, checkpointId, studentId],
     );
-    if (conflict.isNotEmpty) {
+    final offlineConflict = _database.select(
+      '''
+      SELECT capture_id FROM offline_claims
+      WHERE staff_user_id = ? AND event_id = ? AND checkpoint_id = ?
+        AND student_id = ? AND status != 'submitted' LIMIT 1;
+      ''',
+      [staffUserId, eventId, checkpointId, studentId],
+    );
+    if (conflict.isNotEmpty || offlineConflict.isNotEmpty) {
       throw StateError(
-        'This scan payload has terminal blocked evidence. Contact support.',
+        'This scan payload has unresolved evidence. Contact support.',
       );
     }
 
@@ -471,6 +563,325 @@ class SecureAttendanceStore {
     if (updated.length != 1) {
       throw StateError('The pending scan could not be marked as blocked.');
     }
+  }
+
+  static const offlineQueueCapacity = 2400;
+
+  /// Retain the original request UUID until a validated response is stored.
+  ({String id, bool created}) offlineRequest(
+    String eventId,
+    String assignmentId,
+  ) {
+    _ensureOpen();
+    offlineUuid(staffUserId);
+    offlineUuid(eventId);
+    offlineUuid(assignmentId);
+    _database.execute('BEGIN IMMEDIATE;');
+    try {
+      final rows = _database.select(
+        '''
+        SELECT request_id FROM offline_requests
+        WHERE staff_user_id = ? AND event_id = ? AND assignment_id = ?
+          AND resolved = 0;
+        ''',
+        [staffUserId, eventId, assignmentId],
+      );
+      final id = rows.isEmpty
+          ? const Uuid().v4()
+          : rows.single['request_id'] as String;
+      if (rows.isEmpty) {
+        _database.execute(
+          '''
+          INSERT INTO offline_requests
+            (request_id,staff_user_id,event_id,assignment_id)
+          VALUES (?,?,?,?);
+          ''',
+          [id, staffUserId, eventId, assignmentId],
+        );
+      }
+      _database.execute('COMMIT;');
+      return (id: id, created: rows.isEmpty);
+    } catch (_) {
+      _database.execute('ROLLBACK;');
+      rethrow;
+    }
+  }
+
+  void saveOfflinePreparation(OfflinePreparation preparation) {
+    _ensureOpen();
+    if (preparation.staffId != staffUserId) {
+      throw StateError('Preparation owner mismatch.');
+    }
+    _database.execute('BEGIN IMMEDIATE;');
+    try {
+      final request = _database.select(
+        '''
+        SELECT request_id FROM offline_requests
+        WHERE request_id = ? AND staff_user_id = ? AND event_id = ?
+          AND assignment_id = ? AND resolved = 0;
+        ''',
+        [
+          preparation.requestId,
+          staffUserId,
+          preparation.eventId,
+          preparation.assignmentId,
+        ],
+      );
+      if (request.length != 1) {
+        throw StateError('Preparation request is unavailable.');
+      }
+      _database.execute(
+        '''
+        INSERT INTO offline_preparations
+          (preparation_id,request_id,staff_user_id,event_id,context)
+        VALUES (?,?,?,?,?);
+        ''',
+        [
+          preparation.id,
+          preparation.requestId,
+          staffUserId,
+          preparation.eventId,
+          jsonEncode(preparation.toJson()),
+        ],
+      );
+      _database.execute(
+        'UPDATE offline_requests SET resolved = 1 '
+        'WHERE request_id = ? AND staff_user_id = ?;',
+        [preparation.requestId, staffUserId],
+      );
+      _database.execute('COMMIT;');
+    } catch (_) {
+      _database.execute('ROLLBACK;');
+      rethrow;
+    }
+  }
+
+  OfflineClaim createOfflineClaim({
+    required OfflineTimeGuard guard,
+    required String checkpointId,
+    required String studentId,
+  }) {
+    _ensureOpen();
+    final preparation = guard.preparation;
+    if (preparation.staffId != staffUserId ||
+        !isApprovedDevelopmentStudentId(studentId)) {
+      throw StateError('Offline capture scope is invalid.');
+    }
+    _database.execute('BEGIN IMMEDIATE;');
+    try {
+      final saved = _database.select(
+        '''
+        SELECT context FROM offline_preparations
+        WHERE preparation_id = ? AND staff_user_id = ? AND event_id = ?;
+        ''',
+        [preparation.id, staffUserId, preparation.eventId],
+      );
+      if (saved.length != 1 ||
+          saved.single['context'] != jsonEncode(preparation.toJson())) {
+        throw StateError('Preparation context is unavailable.');
+      }
+      final pending = _database.select(
+        '''
+        SELECT 1 FROM $tableName
+        WHERE staff_user_id = ? AND legacy = 0
+          AND (submission_status = 'pending' OR
+            (submission_status = 'blocked' AND event_id = ?
+              AND checkpoint_id = ? AND student_id = ?))
+        LIMIT 1;
+        ''',
+        [staffUserId, preparation.eventId, checkpointId, studentId],
+      );
+      final conflict = _database.select(
+        '''
+        SELECT 1 FROM offline_claims
+        WHERE staff_user_id = ? AND event_id = ? AND checkpoint_id = ?
+          AND student_id = ? AND status = 'blocked' LIMIT 1;
+        ''',
+        [staffUserId, preparation.eventId, checkpointId, studentId],
+      );
+      if (pending.isNotEmpty || conflict.isNotEmpty) {
+        throw const OfflineCaptureException(
+          'Resolve or escalate the original evidence first.',
+        );
+      }
+      final count =
+          _database
+                  .select(
+                    "SELECT count(*) AS total FROM offline_claims "
+                    "WHERE status != 'submitted';",
+                  )
+                  .single['total']
+              as int;
+      if (count >= offlineQueueCapacity) {
+        throw const OfflineCaptureException(
+          'The unresolved offline queue is full. Sync or contact support before capturing again.',
+        );
+      }
+      final claimedAt = guard.claimTime(checkpointId);
+      if (claimedAt == null) {
+        throw const OfflineCaptureException(
+          'The capture window is not safely established. Reconnect and prepare again.',
+        );
+      }
+      final claim = OfflineClaim(
+        id: const Uuid().v4(),
+        preparationId: preparation.id,
+        eventId: preparation.eventId,
+        checkpointId: checkpointId,
+        staffId: staffUserId,
+        studentId: studentId,
+        claimedAt: claimedAt,
+        status: OfflineClaimStatus.queued,
+      );
+      _database.execute(
+        '''
+        INSERT INTO offline_claims
+          (capture_id,preparation_id,staff_user_id,event_id,checkpoint_id,
+           student_id,claimed_at,status)
+        VALUES (?,?,?,?,?,?,?,'queued');
+        ''',
+        [
+          claim.id,
+          claim.preparationId,
+          staffUserId,
+          claim.eventId,
+          claim.checkpointId,
+          claim.studentId,
+          claimedAt.toIso8601String(),
+        ],
+      );
+      _database.execute('COMMIT;');
+      return claim;
+    } catch (_) {
+      _database.execute('ROLLBACK;');
+      rethrow;
+    }
+  }
+
+  OfflineClaim _offlineClaim(Row row) => OfflineClaim(
+    id: row['capture_id'] as String,
+    preparationId: row['preparation_id'] as String,
+    eventId: row['event_id'] as String,
+    checkpointId: row['checkpoint_id'] as String,
+    staffId: row['staff_user_id'] as String,
+    studentId: row['student_id'] as String,
+    claimedAt: offlineInstant(row['claimed_at']),
+    status: OfflineClaimStatus.values.byName(row['status'] as String),
+    receivedAt: row['received_at'] == null
+        ? null
+        : offlineInstant(row['received_at']),
+    replayed: row['replayed'] == null ? null : row['replayed'] == 1,
+  );
+
+  List<OfflineSyncGroup> offlineSyncGroups() {
+    _ensureOpen();
+    return _database
+        .select(
+          '''
+          SELECT p.preparation_id, p.context, count(*) AS queued
+          FROM offline_claims c
+          JOIN offline_preparations p
+            ON p.preparation_id = c.preparation_id
+            AND p.staff_user_id = c.staff_user_id
+            AND p.event_id = c.event_id
+          WHERE c.staff_user_id = ? AND c.status = 'queued'
+          GROUP BY p.preparation_id, p.context
+          ORDER BY min(c.rowid);
+          ''',
+          [staffUserId],
+        )
+        .map((row) {
+          final context = jsonDecode(row['context'] as String) as Map;
+          return OfflineSyncGroup(
+            row['preparation_id'] as String,
+            context['event_title'] as String,
+            row['queued'] as int,
+          );
+        })
+        .toList();
+  }
+
+  List<OfflineClaim> readQueuedOffline(String preparationId) {
+    _ensureOpen();
+    offlineUuid(preparationId);
+    return _database
+        .select(
+          "SELECT * FROM offline_claims WHERE staff_user_id = ? "
+          "AND preparation_id = ? AND status = 'queued' ORDER BY rowid;",
+          [staffUserId, preparationId],
+        )
+        .map(_offlineClaim)
+        .toList();
+  }
+
+  List<OfflineClaim> readRecentOffline({int offset = 0}) {
+    _ensureOpen();
+    if (offset < 0) throw ArgumentError.value(offset, 'offset');
+    return _database
+        .select(
+          "SELECT * FROM offline_claims WHERE staff_user_id = ? "
+          "ORDER BY CASE WHEN status = 'blocked' THEN 0 ELSE 1 END, "
+          "rowid DESC LIMIT 10 OFFSET ?;",
+          [staffUserId, offset],
+        )
+        .map(_offlineClaim)
+        .toList();
+  }
+
+  OfflineQueueCounts offlineCounts() {
+    _ensureOpen();
+    final rows = _database.select(
+      'SELECT status, count(*) AS total FROM offline_claims '
+      'WHERE staff_user_id = ? GROUP BY status;',
+      [staffUserId],
+    );
+    final counts = {for (final row in rows) row['status']: row['total'] as int};
+    return OfflineQueueCounts(
+      counts['queued'] ?? 0,
+      counts['submitted'] ?? 0,
+      counts['blocked'] ?? 0,
+    );
+  }
+
+  void acknowledgeOffline(
+    OfflineClaim claim,
+    OfflineAcknowledgement acknowledgement,
+  ) {
+    _ensureOpen();
+    if (claim.staffId != staffUserId) {
+      throw StateError('Offline claim owner mismatch.');
+    }
+    final rows = _database.select(
+      '''
+      UPDATE offline_claims SET status = 'submitted', received_at = ?, replayed = ?
+      WHERE capture_id = ? AND staff_user_id = ? AND preparation_id = ?
+        AND status = 'queued' RETURNING capture_id;
+      ''',
+      [
+        acknowledgement.receivedAt.toIso8601String(),
+        acknowledgement.replayed ? 1 : 0,
+        claim.id,
+        staffUserId,
+        claim.preparationId,
+      ],
+    );
+    if (rows.length != 1) throw StateError('Acknowledgement was not saved.');
+  }
+
+  void blockOffline(OfflineClaim claim) {
+    _ensureOpen();
+    if (claim.staffId != staffUserId) {
+      throw StateError('Offline claim owner mismatch.');
+    }
+    final rows = _database.select(
+      '''
+      UPDATE offline_claims SET status = 'blocked'
+      WHERE capture_id = ? AND staff_user_id = ? AND preparation_id = ?
+        AND status = 'queued' RETURNING capture_id;
+      ''',
+      [claim.id, staffUserId, claim.preparationId],
+    );
+    if (rows.length != 1) throw StateError('Blocked claim was not saved.');
   }
 
   Future<void> close() async {
