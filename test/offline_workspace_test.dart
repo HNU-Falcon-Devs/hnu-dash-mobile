@@ -73,7 +73,13 @@ class OfflineWidgetGateway extends FakeScanGateway
 
   @override
   List<OfflineSyncGroup> offlineSyncGroups() => saved > submitted
-      ? [OfflineSyncGroup(preparationA, 'Synthetic Assembly', saved - submitted)]
+      ? [
+          OfflineSyncGroup(
+            preparationA,
+            'Synthetic Assembly',
+            saved - submitted,
+          ),
+        ]
       : [];
 
   @override

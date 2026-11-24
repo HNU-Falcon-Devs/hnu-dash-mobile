@@ -188,7 +188,10 @@ void main() {
       await sync();
       expect(gateway.activePreparation, isNull);
       expect(gateway.offlineCounts().queued, 1);
-      expect(store.readQueuedOffline(preparationA).single.parameters, claim.parameters);
+      expect(
+        store.readQueuedOffline(preparationA).single.parameters,
+        claim.parameters,
+      );
     }
     uploadHandler = (params, _) async =>
         acknowledgement(params, replayed: true);
@@ -204,92 +207,103 @@ void main() {
     expect(gateway.offlineCounts().queued, 0);
   });
 
-  test('denied historical preparation cannot starve another selection', () async {
-    final historical = OfflineFixture(
-      fixture.issued.subtract(const Duration(days: 2)),
-      assignment: assignmentB,
-      preparation: preparationB,
-      event: 'd0000000-0000-4000-8000-000000000002',
-      checkpointIdentifier: 'e0000000-0000-4000-8000-000000000002',
-    );
-    final request = store.offlineRequest(
-      historical.event,
-      historical.assignment,
-    );
-    final old = historical.parse(request.id);
-    store.saveOfflinePreparation(old);
-    final denied = store.createOfflineClaim(
-      guard: historical.guard(old),
-      checkpointId: historical.checkpoint.id,
-      studentId: 'SYNTHETIC-OLD',
-    );
-    await prepare();
-    final first = queue('SYNTHETIC-NEW-A');
-    final second = queue('SYNTHETIC-NEW-B');
-    final groups = gateway.offlineSyncGroups();
-    expect(groups.map((group) => group.id), [preparationB, preparationA]);
-    expect(groups.map((group) => group.queued), [1, 2]);
-    var denialCode = '55000';
-    uploadHandler = (params, _) async {
-      if (params['p_preparation_id'] == preparationB) {
-        throw PostgrestException(message: 'synthetic denial', code: denialCode);
-      }
-      return acknowledgement(params);
-    };
-    await sync(preparationId: preparationB);
-    denialCode = '42501';
-    await sync(preparationId: preparationB);
-    expect(uploads, [denied.parameters, denied.parameters]);
-    expect(gateway.offlineCounts().queued, 3);
-    await sync();
-    expect(uploads, [
-      denied.parameters,
-      denied.parameters,
-      first.parameters,
-      second.parameters,
-    ]);
-    expect(gateway.offlineCounts().queued, 1);
-    expect(gateway.offlineCounts().submitted, 2);
-    expect(store.readQueuedOffline(preparationB).single.parameters,
-        denied.parameters);
-    expect(gateway.offlineSyncGroups().single.id, preparationB);
-    await open(staffB);
-    expect(gateway.offlineSyncGroups(), isEmpty);
-    await sync(preparationId: preparationB);
-    expect(uploads, hasLength(4));
-    await open(staffA);
-    expect(store.readQueuedOffline(preparationB).single.parameters,
-        denied.parameters);
-  });
+  test(
+    'denied historical preparation cannot starve another selection',
+    () async {
+      final historical = OfflineFixture(
+        fixture.issued.subtract(const Duration(days: 2)),
+        assignment: assignmentB,
+        preparation: preparationB,
+        event: 'd0000000-0000-4000-8000-000000000002',
+        checkpointIdentifier: 'e0000000-0000-4000-8000-000000000002',
+      );
+      final request = store.offlineRequest(
+        historical.event,
+        historical.assignment,
+      );
+      final old = historical.parse(request.id);
+      store.saveOfflinePreparation(old);
+      final denied = store.createOfflineClaim(
+        guard: historical.guard(old),
+        checkpointId: historical.checkpoint.id,
+        studentId: 'SYNTHETIC-OLD',
+      );
+      await prepare();
+      final first = queue('SYNTHETIC-NEW-A');
+      final second = queue('SYNTHETIC-NEW-B');
+      final groups = gateway.offlineSyncGroups();
+      expect(groups.map((group) => group.id), [preparationB, preparationA]);
+      expect(groups.map((group) => group.queued), [1, 2]);
+      var denialCode = '55000';
+      uploadHandler = (params, _) async {
+        if (params['p_preparation_id'] == preparationB) {
+          throw PostgrestException(
+            message: 'synthetic denial',
+            code: denialCode,
+          );
+        }
+        return acknowledgement(params);
+      };
+      await sync(preparationId: preparationB);
+      denialCode = '42501';
+      await sync(preparationId: preparationB);
+      expect(uploads, [denied.parameters, denied.parameters]);
+      expect(gateway.offlineCounts().queued, 3);
+      await sync();
+      expect(uploads, [
+        denied.parameters,
+        denied.parameters,
+        first.parameters,
+        second.parameters,
+      ]);
+      expect(gateway.offlineCounts().queued, 1);
+      expect(gateway.offlineCounts().submitted, 2);
+      expect(
+        store.readQueuedOffline(preparationB).single.parameters,
+        denied.parameters,
+      );
+      expect(gateway.offlineSyncGroups().single.id, preparationB);
+      await open(staffB);
+      expect(gateway.offlineSyncGroups(), isEmpty);
+      await sync(preparationId: preparationB);
+      expect(uploads, hasLength(4));
+      await open(staffA);
+      expect(
+        store.readQueuedOffline(preparationB).single.parameters,
+        denied.parameters,
+      );
+    },
+  );
 
-  test('account switch during preparation retains only the original request', () async {
-    final dispatched = Completer<void>();
-    final response = Completer<dynamic>();
-    prepareHandler = (_, _) {
-      dispatched.complete();
-      return response.future;
-    };
-    final pending = prepare();
-    final checked = expectLater(pending, throwsStateError);
-    await dispatched.future;
-    final original = prepares.single['p_request_id'] as String;
-    await open(staffB);
-    expect(gateway.activePreparation, isNull);
-    expect(gateway.offlineSyncGroups(), isEmpty);
-    await open(staffA);
-    response.complete(fixture.response(original));
-    await checked;
-    expect(gateway.activePreparation, isNull);
-    expect(store.offlineRequest(eventId, assignmentA).id, original);
-    prepareHandler = (params, _) async => fixture.response(
-      params['p_request_id'] as String,
-      replayed: true,
-    );
-    await prepare();
-    expect(prepares[0], prepares[1]);
-    expect(gateway.activePreparation, isNull);
-    expect(gateway.offlineCounts().queued, 0);
-  });
+  test(
+    'account switch during preparation retains only the original request',
+    () async {
+      final dispatched = Completer<void>();
+      final response = Completer<dynamic>();
+      prepareHandler = (_, _) {
+        dispatched.complete();
+        return response.future;
+      };
+      final pending = prepare();
+      final checked = expectLater(pending, throwsStateError);
+      await dispatched.future;
+      final original = prepares.single['p_request_id'] as String;
+      await open(staffB);
+      expect(gateway.activePreparation, isNull);
+      expect(gateway.offlineSyncGroups(), isEmpty);
+      await open(staffA);
+      response.complete(fixture.response(original));
+      await checked;
+      expect(gateway.activePreparation, isNull);
+      expect(store.offlineRequest(eventId, assignmentA).id, original);
+      prepareHandler = (params, _) async =>
+          fixture.response(params['p_request_id'] as String, replayed: true);
+      await prepare();
+      expect(prepares[0], prepares[1]);
+      expect(gateway.activePreparation, isNull);
+      expect(gateway.offlineCounts().queued, 0);
+    },
+  );
 
   test('foreground stop retains the remaining claim', () async {
     await prepare();

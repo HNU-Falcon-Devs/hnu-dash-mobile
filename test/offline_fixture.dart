@@ -45,13 +45,8 @@ class OfflineFixture {
   DateTime get closes => issued.add(const Duration(hours: 1));
   DateTime get cutoff => closes.add(const Duration(hours: 24));
 
-  OfflineCheckpoint get checkpoint => OfflineCheckpoint(
-    checkpointIdentifier,
-    'Entrance',
-    'IN',
-    starts,
-    closes,
-  );
+  OfflineCheckpoint get checkpoint =>
+      OfflineCheckpoint(checkpointIdentifier, 'Entrance', 'IN', starts, closes);
 
   Map<String, Object> response(
     String request, {

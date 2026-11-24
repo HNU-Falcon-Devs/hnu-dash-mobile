@@ -173,7 +173,10 @@ void main() {
       await expectLater(open(keyStore: wrong), throwsA(anything));
       expect(await File(databasePath).readAsBytes(), bytes);
       store = await open();
-      expect(store.readQueuedOffline(preparationA).single.parameters, claim.parameters);
+      expect(
+        store.readQueuedOffline(preparationA).single.parameters,
+        claim.parameters,
+      );
     },
   );
 
