@@ -10,6 +10,7 @@ import 'package:uuid/uuid.dart';
 
 import 'development_scan_policy.dart';
 import 'offline_capture.dart';
+import 'offline_completion.dart';
 import 'secure_value_store.dart';
 
 enum ScanStatus { pending, accepted, rejected, duplicate, blocked, legacy }
@@ -151,7 +152,7 @@ class SecureAttendanceStore {
         .single
         .values
         .single;
-    if (version is! int || version < 0 || version > 2) {
+    if (version is! int || version < 0 || version > 3) {
       throw StateError('Unsupported encrypted attendance schema.');
     }
     database.execute('PRAGMA foreign_keys = ON;');
@@ -159,7 +160,7 @@ class SecureAttendanceStore {
         .select("SELECT name FROM sqlite_master WHERE type = 'table';")
         .map((row) => row['name'])
         .toSet();
-    if (version == 2) {
+    if (version >= 2) {
       if (!tables.containsAll({
         tableName,
         'offline_requests',
@@ -168,7 +169,12 @@ class SecureAttendanceStore {
       })) {
         throw StateError('Encrypted attendance schema is incomplete.');
       }
-      return;
+      if (version == 3) {
+        if (!tables.contains('offline_accounting')) {
+          throw StateError('Encrypted accounting schema is incomplete.');
+        }
+        return;
+      }
     }
     if (version == 1 && !tables.contains(tableName)) {
       throw StateError('Original encrypted attendance schema is incomplete.');
@@ -251,7 +257,19 @@ class SecureAttendanceStore {
         CREATE INDEX IF NOT EXISTS offline_claims_owner_status
         ON offline_claims(staff_user_id,status);
       ''');
-      database.execute('PRAGMA user_version = 2;');
+      database.execute('''
+        CREATE TABLE IF NOT EXISTS offline_accounting (
+          preparation_id TEXT PRIMARY KEY,
+          staff_user_id TEXT NOT NULL,
+          event_id TEXT NOT NULL,
+          intent_count INTEGER CHECK (intent_count >= 0),
+          terminal TEXT,
+          FOREIGN KEY (preparation_id,staff_user_id,event_id)
+            REFERENCES offline_preparations(preparation_id,staff_user_id,event_id),
+          CHECK (intent_count IS NOT NULL OR terminal IS NOT NULL)
+        );
+      ''');
+      database.execute('PRAGMA user_version = 3;');
       database.execute('COMMIT;');
     } catch (_) {
       database.execute('ROLLBACK;');
@@ -680,6 +698,11 @@ class SecureAttendanceStore {
           saved.single['context'] != jsonEncode(preparation.toJson())) {
         throw StateError('Preparation context is unavailable.');
       }
+      if (preparationSummary(preparation.id).captureStopped) {
+        throw const OfflineCaptureException(
+          'Capture has stopped for this preparation. Saved evidence is retained.',
+        );
+      }
       final pending = _database.select(
         '''
         SELECT 1 FROM $tableName
@@ -772,6 +795,109 @@ class SecureAttendanceStore {
         : offlineInstant(row['received_at']),
     replayed: row['replayed'] == null ? null : row['replayed'] == 1,
   );
+
+  OfflinePreparationSummary preparationSummary(String preparationId) {
+    _ensureOpen();
+    offlineUuid(preparationId);
+    final row = _database.select(
+      '''
+      SELECT p.*, a.intent_count, a.terminal
+      FROM offline_preparations p LEFT JOIN offline_accounting a
+        ON a.preparation_id = p.preparation_id
+        AND a.staff_user_id = p.staff_user_id AND a.event_id = p.event_id
+      WHERE p.staff_user_id = ? AND p.preparation_id = ?;
+      ''',
+      [staffUserId, preparationId],
+    ).single;
+    final raw = jsonDecode(row['context'] as String) as Map;
+    final preparation = OfflinePreparation.parse(
+      raw,
+      eventId: row['event_id'] as String,
+      assignmentId: offlineUuid(raw['assignment_id']),
+      staffId: staffUserId,
+      requestId: row['request_id'] as String,
+    );
+    if (preparation.id != preparationId) {
+      throw StateError('Stored preparation scope mismatch.');
+    }
+    final rows = _database.select(
+      'SELECT status, count(*) AS total FROM offline_claims '
+      'WHERE staff_user_id = ? AND preparation_id = ? GROUP BY status;',
+      [staffUserId, preparationId],
+    );
+    final counts = {for (final row in rows) row['status']: row['total'] as int};
+    return OfflinePreparationSummary(
+      preparation,
+      OfflineQueueCounts(
+        counts['queued'] ?? 0, counts['submitted'] ?? 0, counts['blocked'] ?? 0,
+      ),
+      row['intent_count'] == null ? null : completionCount(row['intent_count']),
+      row['terminal'] == null
+          ? null : OfflineAccounting.parse(jsonDecode(row['terminal'] as String) as Map),
+    );
+  }
+
+  List<OfflinePreparationSummary> preparations({int offset = 0}) {
+    _ensureOpen();
+    if (offset < 0) throw ArgumentError.value(offset);
+    return _database.select(
+      'SELECT preparation_id FROM offline_preparations '
+      'WHERE staff_user_id = ? ORDER BY rowid DESC LIMIT 10 OFFSET ?;',
+      [staffUserId, offset],
+    ).map((row) => preparationSummary(row['preparation_id'] as String)).toList();
+  }
+
+  void persistCompletionIntent(String preparationId, int count) {
+    _ensureOpen();
+    completionCount(count);
+    _database.execute('BEGIN IMMEDIATE;');
+    try {
+      final summary = preparationSummary(preparationId);
+      if (summary.accounting != null || !summary.drained ||
+          summary.counts.submitted != count ||
+          (summary.intent != null && summary.intent != count)) {
+        throw StateError('Completion intent does not match local evidence.');
+      }
+      if (summary.intent == null) {
+        _database.execute(
+          'INSERT INTO offline_accounting '
+          '(preparation_id,staff_user_id,event_id,intent_count) VALUES (?,?,?,?);',
+          [preparationId, staffUserId, summary.preparation.eventId, count],
+        );
+      }
+      _database.execute('COMMIT;');
+    } catch (_) {
+      _database.execute('ROLLBACK;');
+      rethrow;
+    }
+  }
+
+  void recordAccounting(String preparationId, OfflineAccounting accounting) {
+    _ensureOpen();
+    _database.execute('BEGIN IMMEDIATE;');
+    try {
+      final summary = preparationSummary(preparationId);
+      final terminal = jsonEncode(accounting.toJson());
+      if (summary.accounting != null) {
+        if (jsonEncode(summary.accounting!.toJson()) != terminal) {
+          throw StateError('Immutable accounting mismatch.');
+        }
+      } else {
+        _database.execute(
+          '''
+          INSERT INTO offline_accounting (preparation_id,staff_user_id,event_id,terminal)
+          VALUES (?,?,?,?) ON CONFLICT(preparation_id) DO UPDATE SET terminal=excluded.terminal
+          WHERE staff_user_id=excluded.staff_user_id AND event_id=excluded.event_id;
+          ''',
+          [preparationId, staffUserId, summary.preparation.eventId, terminal],
+        );
+      }
+      _database.execute('COMMIT;');
+    } catch (_) {
+      _database.execute('ROLLBACK;');
+      rethrow;
+    }
+  }
 
   List<OfflineSyncGroup> offlineSyncGroups() {
     _ensureOpen();

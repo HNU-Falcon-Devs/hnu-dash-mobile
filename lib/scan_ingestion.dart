@@ -3,6 +3,7 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 
 import 'development_scan_policy.dart';
 import 'offline_capture.dart';
+import 'offline_completion.dart';
 import 'secure_attendance_store.dart';
 import 'secure_value_store.dart';
 
@@ -35,6 +36,15 @@ abstract interface class StaffScanGateway {
 abstract interface class OfflineScanGateway {
   OfflinePreparation? get activePreparation;
   void invalidateOffline();
+  void suspendOffline();
+  Future<bool> resumeOffline(String preparationId, bool Function() shouldContinue);
+  List<OfflinePreparationSummary> preparations({int offset = 0});
+  Future<OfflinePreparationStatus> preparationStatus(
+    String preparationId, bool Function() shouldContinue,
+  );
+  Future<String> completePreparation(
+    String preparationId, int count, bool Function() shouldContinue,
+  );
   bool canCaptureOffline(String preparationId, String checkpointId);
   Future<String> prepareOffline({
     required String eventId,
@@ -105,6 +115,16 @@ Future<dynamic> submitPinnedOfflineRpc(
     .rpc('submit_offline_capture', params: parameters)
     .setHeader('Authorization', 'Bearer $accessToken');
 
+Future<dynamic> statusPinnedOfflineRpc(
+  SupabaseClient client, Map<String, dynamic> parameters, String accessToken,
+) => client.rpc('get_offline_preparation_status', params: parameters)
+    .setHeader('Authorization', 'Bearer $accessToken');
+
+Future<dynamic> completePinnedOfflineRpc(
+  SupabaseClient client, Map<String, dynamic> parameters, String accessToken,
+) => client.rpc('complete_offline_preparation', params: parameters)
+    .setHeader('Authorization', 'Bearer $accessToken');
+
 typedef AttendanceStoreOpener = Future<SecureAttendanceStore> Function(
   String staffUserId,
 );
@@ -129,6 +149,10 @@ class SupabaseStaffScanGateway implements StaffScanGateway, OfflineScanGateway {
              preparePinnedOfflineRpc(client, parameters, token),
          upload: (parameters, token) =>
              submitPinnedOfflineRpc(client, parameters, token),
+         status: (parameters, token) =>
+             statusPinnedOfflineRpc(client, parameters, token),
+         complete: (parameters, token) =>
+             completePinnedOfflineRpc(client, parameters, token),
          openStore: (staffUserId) => SecureAttendanceStore.openOnDevice(
            staffUserId: staffUserId,
            keyStore: secureValues,
@@ -143,12 +167,16 @@ class SupabaseStaffScanGateway implements StaffScanGateway, OfflineScanGateway {
     required AttendanceStoreOpener openStore,
     AttendanceScanRpc? prepare,
     AttendanceScanRpc? upload,
+    AttendanceScanRpc? status,
+    AttendanceScanRpc? complete,
   }) : this._(
          currentStaffId: currentStaffId,
          currentSession: currentSession,
          ingest: ingest,
          prepare: prepare,
          upload: upload,
+         status: status,
+         complete: complete,
          openStore: openStore,
        );
 
@@ -158,13 +186,15 @@ class SupabaseStaffScanGateway implements StaffScanGateway, OfflineScanGateway {
     required this._ingest,
     required this._prepare,
     required this._upload,
+    required this._status,
+    required this._complete,
     required this._openStore,
   });
 
   final CurrentStaffId _currentStaffId;
   final CurrentStaffSession _currentSession;
   final AttendanceScanRpc _ingest;
-  final AttendanceScanRpc? _prepare, _upload;
+  final AttendanceScanRpc? _prepare, _upload, _status, _complete;
   final AttendanceStoreOpener _openStore;
   SecureAttendanceStore? _store;
   String? _staffUserId;
@@ -173,6 +203,8 @@ class SupabaseStaffScanGateway implements StaffScanGateway, OfflineScanGateway {
   Object? _operation;
   int _offlineEpoch = 0;
   OfflineTimeGuard? _offlineGuard;
+  bool _captureReady = false;
+  int _captureEpoch = 0;
   final _requestClocks = <String, _PreparationClock>{};
 
   Future<T> _exclusive<T>(Future<T> Function() action) async {
@@ -384,20 +416,24 @@ class SupabaseStaffScanGateway implements StaffScanGateway, OfflineScanGateway {
   OfflinePreparation? get activePreparation {
     _ensureCurrentAccount();
     final guard = _offlineGuard;
-    return guard != null && guard.isLeaseUsable ? guard.preparation : null;
+    return guard != null && guard.isLeaseUsable &&
+        !_store!.preparationSummary(guard.preparation.id).captureStopped
+        ? guard.preparation : null;
   }
 
   @override
   bool canCaptureOffline(String preparationId, String checkpointId) {
     _ensureCurrentAccount();
     final guard = _offlineGuard;
-    return guard != null &&
+    return _captureReady && guard != null &&
         guard.preparation.id == preparationId &&
+        !_store!.preparationSummary(preparationId).captureStopped &&
         guard.claimTime(checkpointId) != null;
   }
 
   @override
   void invalidateOffline() {
+    suspendOffline();
     _offlineEpoch++;
     _offlineGuard = null;
     _requestClocks.clear();
@@ -424,6 +460,7 @@ class SupabaseStaffScanGateway implements StaffScanGateway, OfflineScanGateway {
         current.assignmentId == assignmentId) {
       return 'An existing preparation is active. Enter offline capture mode explicitly.';
     }
+    suspendOffline();
     final epoch = ++_offlineEpoch;
     _offlineGuard = null;
 
@@ -494,6 +531,10 @@ class SupabaseStaffScanGateway implements StaffScanGateway, OfflineScanGateway {
         requestWall: anchor.wall,
         receivedElapsed: anchor.stopwatch.elapsed,
       );
+      // Fresh issuance establishes the initial context. A metadata replay
+      // is never permission to resume without an authoritative status check.
+      _captureReady = !parsed.replayed &&
+          !store.preparationSummary(parsed.id).captureStopped;
       return 'Offline preparation saved. Enter offline capture mode explicitly.';
     } on PostgrestException catch (error) {
       ensureContext();
@@ -524,7 +565,7 @@ class SupabaseStaffScanGateway implements StaffScanGateway, OfflineScanGateway {
     final store = _store!;
     final staff = _staffUserId!;
     final guard = _offlineGuard;
-    if (guard == null || guard.preparation.id != preparationId) {
+    if (!_captureReady || guard == null || guard.preparation.id != preparationId) {
       throw const OfflineCaptureException(
         'No safely prepared offline context. Reconnect and prepare again.',
       );
@@ -536,6 +577,149 @@ class SupabaseStaffScanGateway implements StaffScanGateway, OfflineScanGateway {
       studentId: studentId,
     );
   }
+
+  @override
+  void suspendOffline() {
+    _captureReady = false;
+    _captureEpoch++;
+  }
+
+  void _stopPreparation(String id, {bool terminal = false}) {
+    if (_offlineGuard?.preparation.id != id) return;
+    suspendOffline();
+    if (terminal) _offlineGuard = null;
+  }
+
+  @override
+  List<OfflinePreparationSummary> preparations({int offset = 0}) {
+    _ensureCurrentAccount();
+    return _store!.preparations(offset: offset);
+  }
+
+  Future<StaffScanSession> _accountSession(
+    SecureAttendanceStore store, String staff, bool Function() shouldContinue,
+  ) async {
+    final session = await _currentSession();
+    _ensureBoundAccount(store, staff);
+    if (!shouldContinue() || session == null ||
+        session.staffUserId != staff || session.accessToken.isEmpty) {
+      throw StateError('Live owner session unavailable.');
+    }
+    return session;
+  }
+
+  Future<OfflinePreparationStatus> _readPreparationStatus(
+    SecureAttendanceStore store, String staff, String id,
+    bool Function() shouldContinue,
+  ) async {
+    final prep = store.preparationSummary(id).preparation;
+    try {
+      final session = await _accountSession(store, staff, shouldContinue);
+      final rpc = _status;
+      if (rpc == null) throw StateError('Preparation status unavailable.');
+      final raw = await rpc({'p_preparation_id': id}, session.accessToken);
+      _ensureBoundAccount(store, staff);
+      if (!shouldContinue()) throw StateError('Status check interrupted.');
+      final status = OfflinePreparationStatus.parse(raw, prep);
+      final known = store.preparationSummary(id).accounting;
+      if (known != null && status.accounting == null) {
+        throw StateError('Server accounting contradicts retained evidence.');
+      }
+      if (status.accounting != null) {
+        store.recordAccounting(id, status.accounting!);
+      }
+      if (!status.permitsCapture) _stopPreparation(id, terminal: true);
+      return status;
+    } catch (_) {
+      _ensureBoundAccount(store, staff);
+      _stopPreparation(id);
+      rethrow;
+    }
+  }
+
+  @override
+  Future<OfflinePreparationStatus> preparationStatus(
+    String preparationId, bool Function() shouldContinue,
+  ) => _exclusive(() async {
+    _ensureCurrentAccount();
+    return _readPreparationStatus(_store!, _staffUserId!, preparationId, shouldContinue);
+  });
+
+  @override
+  Future<bool> resumeOffline(String preparationId, bool Function() shouldContinue) =>
+      _exclusive(() async {
+    _ensureCurrentAccount();
+    final store = _store!;
+    final staff = _staffUserId!;
+    suspendOffline();
+    final epoch = _captureEpoch;
+    final guard = _offlineGuard;
+    if (guard == null || guard.preparation.id != preparationId ||
+        !guard.isLeaseUsable ||
+        store.preparationSummary(preparationId).captureStopped) {
+      return false;
+    }
+    final status = await _readPreparationStatus(store, staff, preparationId, shouldContinue);
+    _ensureBoundAccount(store, staff);
+    if (epoch != _captureEpoch || !shouldContinue() || !status.permitsCapture ||
+        !identical(guard, _offlineGuard) || !guard.isLeaseUsable ||
+        store.preparationSummary(preparationId).captureStopped) {
+      return false;
+    }
+    _captureReady = true;
+    return true;
+  });
+
+  @override
+  Future<String> completePreparation(
+    String preparationId, int count, bool Function() shouldContinue,
+  ) => _exclusive(() async {
+    _ensureCurrentAccount();
+    final store = _store!;
+    final staff = _staffUserId!;
+    completionCount(count);
+    _stopPreparation(preparationId);
+    try {
+      final before = store.preparationSummary(preparationId);
+      if (!before.drained || before.counts.submitted != count ||
+          (before.intent != null && before.intent != count)) {
+        return 'Completion requires the unchanged local acknowledged count and no unresolved claims.';
+      }
+      final status = await _readPreparationStatus(store, staff, preparationId, shouldContinue);
+      _ensureBoundAccount(store, staff);
+      final current = store.preparationSummary(preparationId);
+      if (status.accounting != null) {
+        return status.accounting!.disposition == 'completed' &&
+            status.accounting!.declared == count
+            ? 'Server records completion for this count; evidence is retained.'
+            : 'Server accounting differs from local evidence. Contact support.';
+      }
+      if (!status.canComplete || status.uploaded != count ||
+          !current.drained || current.counts.submitted != count ||
+          !shouldContinue()) {
+        return 'Completion unavailable or count mismatch. Preserve evidence and reload status.';
+      }
+      final rpc = _complete;
+      if (rpc == null) throw StateError('Completion unavailable.');
+      final session = await _accountSession(store, staff, shouldContinue);
+      // Atomic local intent is committed before the network mutation.
+      store.persistCompletionIntent(preparationId, count);
+      _stopPreparation(preparationId, terminal: true);
+      final raw = await rpc({
+        'p_preparation_id': preparationId,
+        'p_acknowledged_count': count,
+      }, session.accessToken);
+      _ensureBoundAccount(store, staff);
+      final accounting = OfflineAccounting.acknowledgement(
+        raw, current.preparation, count,
+      );
+      store.recordAccounting(preparationId, accounting);
+      return 'Preparation completed on the server. Claims still await manager review.';
+    } catch (_) {
+      _ensureBoundAccount(store, staff);
+      return 'Completion not confirmed. Any saved declaration is retained; reload status or retry the same count.';
+    }
+  });
 
   @override
   OfflineQueueCounts offlineCounts() {
@@ -604,11 +788,11 @@ class SupabaseStaffScanGateway implements StaffScanGateway, OfflineScanGateway {
           return 'Sync paused: immutable evidence conflicts or is invalid. Contact support with the capture UUID; do not replace it.';
         }
         if (error.code == '42501') {
-          invalidateOffline();
+          _stopPreparation(preparationId, terminal: true);
           return 'Sync paused: access could not be verified. Sign in again or contact support.';
         }
         if (error.code == '55000') {
-          invalidateOffline();
+          _stopPreparation(preparationId, terminal: true);
           return 'Sync paused: the server is not accepting this claim. Contact support; the original UUID is retained.';
         }
         return 'Sync paused: no durable acknowledgement confirmed. Retry the original queued claim explicitly.';

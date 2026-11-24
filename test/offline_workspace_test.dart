@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:hnu_dash_mobile/offline_capture.dart';
+import 'package:hnu_dash_mobile/offline_completion.dart';
 import 'package:hnu_dash_mobile/scan_ingestion.dart';
 import 'package:hnu_dash_mobile/staff_workspace.dart';
 
@@ -27,6 +28,26 @@ class OfflineWidgetGateway extends FakeScanGateway
     invalidateOffline();
     await super.close();
   }
+
+  @override
+  void suspendOffline() {}
+
+  @override
+  Future<bool> resumeOffline(String preparationId, bool Function() shouldContinue) async =>
+      shouldContinue() && activePreparation?.id == preparationId;
+
+  @override
+  List<OfflinePreparationSummary> preparations({int offset = 0}) => [];
+
+  @override
+  Future<OfflinePreparationStatus> preparationStatus(
+    String preparationId, bool Function() shouldContinue,
+  ) async => throw UnimplementedError();
+
+  @override
+  Future<String> completePreparation(
+    String preparationId, int count, bool Function() shouldContinue,
+  ) async => throw UnimplementedError();
 
   @override
   bool canCaptureOffline(String preparationId, String checkpointId) =>

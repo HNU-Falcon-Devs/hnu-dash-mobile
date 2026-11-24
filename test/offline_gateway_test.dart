@@ -8,6 +8,7 @@ import 'package:hnu_dash_mobile/secure_attendance_store.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
 import 'offline_fixture.dart';
+import 'completion_fixture.dart';
 
 void main() {
   late Directory directory;
@@ -76,6 +77,10 @@ void main() {
         uploads.add(Map.of(params));
         return uploadHandler(params, token);
       },
+      status: (params, _) async => statusResponse(fixture.parse(requestId)),
+      complete: (params, _) async => completionResponse(
+        fixture.parse(requestId), params['p_acknowledged_count'] as int,
+      ),
       openStore: (staff) async {
         store = await SecureAttendanceStore.open(
           databasePath: '${directory.path}/evidence.db',

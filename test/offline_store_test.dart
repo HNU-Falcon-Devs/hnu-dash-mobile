@@ -74,6 +74,7 @@ void main() {
     final database = sqlite3.open(databasePath);
     final key = keys.values[SecureAttendanceStore.encryptionKeyName]!;
     database.execute("PRAGMA key = \"x'$key'\";");
+    database.execute('DROP TABLE offline_accounting;');
     database.execute('DROP TABLE offline_claims;');
     database.execute('DROP TABLE offline_preparations;');
     database.execute('DROP TABLE offline_requests;');
@@ -103,7 +104,7 @@ void main() {
     await store.close();
     final migrated = sqlite3.open(databasePath);
     migrated.execute("PRAGMA key = \"x'$key'\";");
-    expect(migrated.select('PRAGMA user_version;').single.values.single, 2);
+    expect(migrated.select('PRAGMA user_version;').single.values.single, 3);
     expect(
       migrated
           .select("SELECT student_id FROM attendance_scans WHERE legacy = 1;")
