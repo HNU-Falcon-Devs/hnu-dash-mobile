@@ -39,6 +39,38 @@ void main() {
     ]);
   });
 
+  test('M4.2 Staff RPCs pin bearer and send only exact parameters', () async {
+    final observed = <String>[];
+    final bodies = <Object?>[];
+    final transport = MockClient((request) async {
+      observed.add(request.url.path);
+      bodies.add(jsonDecode(request.body));
+      expect(request.headers['authorization'], 'Bearer token-owner');
+      return http.Response('{}', 200,
+          headers: {'content-type': 'application/json'}, request: request);
+    });
+    final client = SupabaseClient(
+      'https://project.example',
+      'sb_publishable_synthetic_test',
+      httpClient: transport,
+      accessToken: () async => 'token-other',
+    );
+    addTearDown(client.dispose);
+    const id = 'c0000000-0000-4000-8000-000000000001';
+    await statusPinnedOfflineRpc(client, {'p_preparation_id': id}, 'token-owner');
+    await completePinnedOfflineRpc(client, {
+      'p_preparation_id': id, 'p_acknowledged_count': 0,
+    }, 'token-owner');
+    expect(observed, [
+      '/rest/v1/rpc/get_offline_preparation_status',
+      '/rest/v1/rpc/complete_offline_preparation',
+    ]);
+    expect(bodies, [
+      {'p_preparation_id': id},
+      {'p_preparation_id': id, 'p_acknowledged_count': 0},
+    ]);
+  });
+
   test(
     'RPC sends the originating token despite shared-session changes',
     () async {

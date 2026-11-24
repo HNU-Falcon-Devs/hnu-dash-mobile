@@ -841,12 +841,18 @@ class SupabaseStaffScanGateway implements StaffScanGateway, OfflineScanGateway {
           retryAllowed: false,
         );
       case '42501':
+        if (_offlineGuard?.preparation.eventId == record.eventId) {
+          invalidateOffline();
+        }
         return ScanAttemptResult(
           record: record,
           message: 'Access could not be verified. No receipt was confirmed. Sign in again or contact your event manager before retrying.',
           retryAllowed: true,
         );
       case '55000':
+        if (_offlineGuard?.preparation.eventId == record.eventId) {
+          invalidateOffline();
+        }
         return ScanAttemptResult(
           record: record,
           message: 'The event is not currently accepting new scans. No receipt was returned. Retry this same attempt only if the event is reopened.',

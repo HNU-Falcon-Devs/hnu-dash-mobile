@@ -57,7 +57,7 @@ The Mobile client does not read or cache the frozen student roster, decide eligi
 
 ## M4.3A synthetic offline foundation
 
-The authorized [Mobile #14](https://github.com/HNU-Falcon-Devs/hnu-dash-mobile/issues/14) implementation depends on the [merged M4.1 Backend contract](https://github.com/HNU-Falcon-Devs/hnu-dash-backend/blob/13788b8b78c22f31deb269aa1296612936650941/docs/integration/milestone-4-part-1-offline-evidence.md). The assigned-event query uses its offline settings and assignment identity. No M4.2 endpoints are used.
+The authorized [Mobile #14](https://github.com/HNU-Falcon-Devs/hnu-dash-mobile/issues/14) implementation depends on the [merged M4.1 Backend contract](https://github.com/HNU-Falcon-Devs/hnu-dash-backend/blob/13788b8b78c22f31deb269aa1296612936650941/docs/integration/milestone-4-part-1-offline-evidence.md). The assigned-event query uses its offline settings and assignment identity. Capture and upload use only M4.1; M4.3B adds the two accepted Staff accounting endpoints described below.
 
 1. Refresh assigned events and explicitly prepare an offline-enabled event while online. The preparation request UUID is encrypted and persisted before the RPC. Validate the response against the selected assignment, event and checkpoint schedule.
 2. Explicitly enter offline mode and choose a prepared checkpoint. Capture only while conservative server-time bounds are within both the lease and checkpoint. The guard combines monotonic elapsed time with wall-clock consistency (two-second tolerance); it refuses ambiguous boundaries and clock changes. The claimed timestamp at confirmation remains untrusted.
