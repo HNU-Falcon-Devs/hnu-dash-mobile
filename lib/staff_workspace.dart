@@ -743,6 +743,7 @@ class _StaffWorkspaceState extends State<StaffWorkspace>
         ),
       );
       if (studentId == null ||
+          !mounted ||
           !valid() ||
           !isApprovedDevelopmentStudentId(studentId)) {
         return;
