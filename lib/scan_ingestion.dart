@@ -477,6 +477,7 @@ class SupabaseStaffScanGateway implements StaffScanGateway, OfflineScanGateway {
     }
     suspendOffline();
     final epoch = ++_offlineEpoch;
+    final captureEpoch = _captureEpoch;
     _offlineGuard = null;
 
     void ensureContext() {
@@ -550,6 +551,7 @@ class SupabaseStaffScanGateway implements StaffScanGateway, OfflineScanGateway {
       // is never permission to resume without an authoritative status check.
       _captureReady =
           !parsed.replayed &&
+          captureEpoch == _captureEpoch &&
           !store.preparationSummary(parsed.id).captureStopped;
       return 'Offline preparation saved. Enter offline capture mode explicitly.';
     } on PostgrestException catch (error) {
@@ -639,6 +641,8 @@ class SupabaseStaffScanGateway implements StaffScanGateway, OfflineScanGateway {
     final prep = store.preparationSummary(id).preparation;
     try {
       final session = await _accountSession(store, staff, shouldContinue);
+      _ensureBoundAccount(store, staff);
+      if (!shouldContinue()) throw StateError('Status check interrupted.');
       final rpc = _status;
       if (rpc == null) throw StateError('Preparation status unavailable.');
       final raw = await rpc({'p_preparation_id': id}, session.accessToken);
@@ -753,6 +757,8 @@ class SupabaseStaffScanGateway implements StaffScanGateway, OfflineScanGateway {
       final rpc = _complete;
       if (rpc == null) throw StateError('Completion unavailable.');
       final session = await _accountSession(store, staff, shouldContinue);
+      _ensureBoundAccount(store, staff);
+      if (!shouldContinue()) throw StateError('Completion interrupted.');
       // Atomic local intent is committed before the network mutation.
       store.persistCompletionIntent(preparationId, count);
       _stopPreparation(preparationId, terminal: true);
@@ -761,6 +767,9 @@ class SupabaseStaffScanGateway implements StaffScanGateway, OfflineScanGateway {
         'p_acknowledged_count': count,
       }, session.accessToken);
       _ensureBoundAccount(store, staff);
+      if (!shouldContinue()) {
+        return 'Completion response interrupted. Reload status; saved declaration is retained.';
+      }
       final accounting = OfflineAccounting.acknowledgement(
         raw,
         current.preparation,

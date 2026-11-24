@@ -231,12 +231,10 @@ class _StaffWorkspaceState extends State<StaffWorkspace>
     _foreground = state == AppLifecycleState.resumed;
     if (!_foreground) {
       _syncEpoch++;
-      if (state == AppLifecycleState.paused ||
-          state == AppLifecycleState.hidden) {
-        _offlineGateway?.suspendOffline();
-        _exitOffline();
-        _preparationStatus = null;
-      }
+      // A known foreground interruption requires an explicit status check
+      // before capture resumes, without replacing the original time anchor.
+      _exitOffline();
+      setState(() => _preparationStatus = null);
       return;
     }
     if (widget.gateway.account != _account) {
@@ -651,6 +649,7 @@ class _StaffWorkspaceState extends State<StaffWorkspace>
     if (gateway == null ||
         event == null ||
         account == null ||
+        !_foreground ||
         event.assignmentId == null ||
         event.uploadCutoff == null ||
         event.state != 'OPEN' ||
@@ -786,6 +785,7 @@ class _StaffWorkspaceState extends State<StaffWorkspace>
     final checkpoint = _offlineCheckpoint;
     final gateway = _offlineGateway;
     if (!_offlineMode ||
+        !_foreground ||
         !_scanStoreReady ||
         _scanBusy ||
         _hasUnresolvedScans ||
@@ -1480,7 +1480,7 @@ class _StaffWorkspaceState extends State<StaffWorkspace>
                           _preparationStatus = null;
                         }),
                 ),
-                Row(
+                Wrap(
                   children: [
                     TextButton(
                       onPressed: _scanBusy || _preparationOffset == 0
@@ -1505,6 +1505,8 @@ class _StaffWorkspaceState extends State<StaffWorkspace>
                     Text(
                       'Saved declaration: ${item.intent} acknowledged claims',
                     ),
+                  if (item.intent != null && item.accounting == null)
+                    const Text('Completion unconfirmed — capture stopped.'),
                   if (item.accounting != null)
                     Text(
                       'Retained server accounting: ${item.accounting!.disposition}; '
@@ -1517,7 +1519,7 @@ class _StaffWorkspaceState extends State<StaffWorkspace>
                     ),
                   if (_preparationStatus case final status?)
                     Text(
-                      'Server: ${status.uploaded} durable claims; '
+                      'Server: ${status.eventState}; ${status.uploaded} durable claims; '
                       '${status.accounting?.disposition ?? "unaccounted"}'
                       '${status.sealedAt != null ? " — sealed" : ""}',
                     ),

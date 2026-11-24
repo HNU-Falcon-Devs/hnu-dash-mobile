@@ -331,6 +331,28 @@ void main() {
   );
 
   test(
+    'interrupted completion keeps intent without applying late reply',
+    () async {
+      await prepare();
+      var foreground = true;
+      final prep = store.preparationSummary(preparationA).preparation;
+      completionHandler = (_, _) async {
+        foreground = false;
+        return completionResponse(prep, 0);
+      };
+      await gateway.completePreparation(preparationA, 0, () => foreground);
+      expect(store.preparationSummary(preparationA).intent, 0);
+      expect(store.preparationSummary(preparationA).accounting, isNull);
+      expect(gateway.activePreparation, isNull);
+      foreground = true;
+      statusHandler = (_, _) async =>
+          statusResponse(prep, disposition: 'completed');
+      await gateway.preparationStatus(preparationA, () => foreground);
+      expect(store.preparationSummary(preparationA).accounting?.declared, 0);
+    },
+  );
+
+  test(
     'late status and completion responses cannot cross A-B-A accounts',
     () async {
       await prepare();
