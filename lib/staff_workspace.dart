@@ -5,6 +5,7 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 
 import 'development_scan_policy.dart';
 import 'offline_capture.dart';
+import 'offline_completion.dart';
 import 'scan_ingestion.dart';
 import 'secure_attendance_store.dart';
 import 'student_qr_scanner.dart';
@@ -186,6 +187,10 @@ class _StaffWorkspaceState extends State<StaffWorkspace>
   List<OfflineClaim> _offlineRecords = [];
   List<OfflineSyncGroup> _offlineSyncGroups = [];
   String? _syncPreparationId;
+  List<OfflinePreparationSummary> _preparations = [];
+  int _preparationOffset = 0;
+  String? _statusPreparationId;
+  OfflinePreparationStatus? _preparationStatus;
   DialogRoute<bool>? _offlineConfirmationRoute;
   bool _offlineMode = false;
   bool _foreground = true;
@@ -226,6 +231,10 @@ class _StaffWorkspaceState extends State<StaffWorkspace>
     _foreground = state == AppLifecycleState.resumed;
     if (!_foreground) {
       _syncEpoch++;
+      // A known foreground interruption requires an explicit status check
+      // before capture resumes, without replacing the original time anchor.
+      _exitOffline();
+      setState(() => _preparationStatus = null);
       return;
     }
     if (widget.gateway.account != _account) {
@@ -267,6 +276,10 @@ class _StaffWorkspaceState extends State<StaffWorkspace>
       _offlineRecords = [];
       _offlineSyncGroups = [];
       _syncPreparationId = null;
+      _preparations = [];
+      _preparationOffset = 0;
+      _statusPreparationId = null;
+      _preparationStatus = null;
       _offlineOffset = 0;
     });
   }
@@ -323,6 +336,8 @@ class _StaffWorkspaceState extends State<StaffWorkspace>
       final counts = offline?.offlineCounts();
       final offlineRecords = offline?.recentOffline();
       final syncGroups = offline?.offlineSyncGroups() ?? [];
+      final preparations =
+          offline?.preparations(offset: _preparationOffset) ?? [];
       final preparation = offline?.activePreparation;
       setState(() {
         _scanRecords = records;
@@ -331,6 +346,13 @@ class _StaffWorkspaceState extends State<StaffWorkspace>
         _offlineCounts = counts ?? const OfflineQueueCounts(0, 0, 0);
         _offlineRecords = offlineRecords ?? [];
         _offlineSyncGroups = syncGroups;
+        _preparations = preparations;
+        if (!preparations.any(
+          (item) => item.preparation.id == _statusPreparationId,
+        )) {
+          _statusPreparationId = null;
+          _preparationStatus = null;
+        }
         if (!syncGroups.any((group) => group.id == _syncPreparationId)) {
           _syncPreparationId = null;
         }
@@ -358,6 +380,8 @@ class _StaffWorkspaceState extends State<StaffWorkspace>
       final counts = offline?.offlineCounts();
       final offlineRecords = offline?.recentOffline();
       final syncGroups = offline?.offlineSyncGroups() ?? [];
+      final preparations =
+          offline?.preparations(offset: _preparationOffset) ?? [];
       final preparation = offline?.activePreparation;
       setState(() {
         _scanRecords = records;
@@ -365,6 +389,13 @@ class _StaffWorkspaceState extends State<StaffWorkspace>
         _offlineCounts = counts ?? const OfflineQueueCounts(0, 0, 0);
         _offlineRecords = offlineRecords ?? [];
         _offlineSyncGroups = syncGroups;
+        _preparations = preparations;
+        if (!preparations.any(
+          (item) => item.preparation.id == _statusPreparationId,
+        )) {
+          _statusPreparationId = null;
+          _preparationStatus = null;
+        }
         if (!syncGroups.any((group) => group.id == _syncPreparationId)) {
           _syncPreparationId = null;
         }
@@ -390,6 +421,9 @@ class _StaffWorkspaceState extends State<StaffWorkspace>
         _offlineRecords = [];
         _offlineSyncGroups = [];
         _syncPreparationId = null;
+        _preparations = [];
+        _statusPreparationId = null;
+        _preparationStatus = null;
         _offlineCounts = const OfflineQueueCounts(0, 0, 0);
         _offlineTimer?.cancel();
       });
@@ -615,6 +649,7 @@ class _StaffWorkspaceState extends State<StaffWorkspace>
     if (gateway == null ||
         event == null ||
         account == null ||
+        !_foreground ||
         event.assignmentId == null ||
         event.uploadCutoff == null ||
         event.state != 'OPEN' ||
@@ -660,9 +695,14 @@ class _StaffWorkspaceState extends State<StaffWorkspace>
     }
   }
 
-  void _enterOffline() {
+  Future<void> _enterOffline() async {
     final gateway = _offlineGateway;
+    final account = _account;
+    final generation = _accountEpoch;
+    final epoch = _syncEpoch;
     if (gateway == null ||
+        account == null ||
+        !_foreground ||
         !_scanStoreReady ||
         _scanBusy ||
         _busy ||
@@ -677,6 +717,23 @@ class _StaffWorkspaceState extends State<StaffWorkspace>
           _scanMessage =
               'No valid offline time anchor. Reconnect and prepare again.';
         });
+        return;
+      }
+      setState(() => _scanBusy = true);
+      final resumed = await gateway.resumeOffline(
+        preparation.id,
+        () =>
+            _foreground &&
+            epoch == _syncEpoch &&
+            _validScanAccount(account, generation),
+      );
+      if (!_validScanAccount(account, generation)) return;
+      if (!resumed || !_foreground || epoch != _syncEpoch) {
+        setState(
+          () => _scanMessage =
+              'Online preparation status could not authorize resuming capture.',
+        );
+        await _refreshScanRecords(account);
         return;
       }
       setState(() {
@@ -702,14 +759,20 @@ class _StaffWorkspaceState extends State<StaffWorkspace>
         }
       });
     } catch (_) {
+      if (!_validScanAccount(account, generation)) return;
       setState(() {
         _scanMessage =
             'Offline capture is unavailable. Check secure storage and sign-in.';
       });
+    } finally {
+      if (_validScanAccount(account, generation)) {
+        setState(() => _scanBusy = false);
+      }
     }
   }
 
   void _exitOffline() {
+    _offlineGateway?.suspendOffline();
     _offlineTimer?.cancel();
     setState(() {
       _offlineMode = false;
@@ -722,6 +785,7 @@ class _StaffWorkspaceState extends State<StaffWorkspace>
     final checkpoint = _offlineCheckpoint;
     final gateway = _offlineGateway;
     if (!_offlineMode ||
+        !_foreground ||
         !_scanStoreReady ||
         _scanBusy ||
         _hasUnresolvedScans ||
@@ -743,6 +807,7 @@ class _StaffWorkspaceState extends State<StaffWorkspace>
     final account = _account;
     final gateway = _offlineGateway;
     final generation = _accountEpoch;
+    final epoch = _syncEpoch;
     if (!_canCaptureOffline ||
         preparation == null ||
         checkpoint == null ||
@@ -756,6 +821,8 @@ class _StaffWorkspaceState extends State<StaffWorkspace>
     });
     bool valid() =>
         _validScanAccount(account, generation) &&
+        _foreground &&
+        epoch == _syncEpoch &&
         _offlineMode &&
         _offlinePreparation?.id == preparation.id &&
         _offlineCheckpoint?.id == checkpoint.id;
@@ -835,6 +902,157 @@ class _StaffWorkspaceState extends State<StaffWorkspace>
     }
   }
 
+  OfflinePreparationSummary? get _selectedPreparation {
+    for (final summary in _preparations) {
+      if (summary.preparation.id == _statusPreparationId) return summary;
+    }
+    return null;
+  }
+
+  void _pagePreparations(int offset) {
+    try {
+      final items = _offlineGateway!.preparations(offset: offset);
+      if (items.isEmpty && offset != 0) return;
+      setState(() {
+        _preparations = items;
+        _preparationOffset = offset;
+        _statusPreparationId = null;
+        _preparationStatus = null;
+      });
+    } catch (_) {
+      setState(() => _scanMessage = 'Could not read local preparations.');
+    }
+  }
+
+  Future<void> _checkPreparationStatus() async {
+    final gateway = _offlineGateway;
+    final account = _account;
+    final id = _statusPreparationId;
+    final generation = _accountEpoch;
+    final epoch = _syncEpoch;
+    if (gateway == null ||
+        account == null ||
+        id == null ||
+        !_foreground ||
+        _scanBusy) {
+      return;
+    }
+    if (_offlinePreparation?.id == id) _exitOffline();
+    setState(() {
+      _scanBusy = true;
+      _preparationStatus = null;
+      _scanMessage = null;
+    });
+    bool valid() =>
+        _validScanAccount(account, generation) &&
+        _foreground &&
+        epoch == _syncEpoch &&
+        _statusPreparationId == id;
+    try {
+      final status = await gateway.preparationStatus(id, valid);
+      if (!valid()) return;
+      await _refreshScanRecords(account);
+      if (!valid()) return;
+      setState(() => _preparationStatus = status);
+    } catch (_) {
+      if (valid()) {
+        setState(
+          () => _scanMessage =
+              'Server status unavailable. Local evidence is retained.',
+        );
+      }
+    } finally {
+      if (_validScanAccount(account, generation)) {
+        setState(() => _scanBusy = false);
+      }
+    }
+  }
+
+  bool get _mayComplete {
+    final item = _selectedPreparation;
+    final status = _preparationStatus;
+    if (item == null || !item.drained || item.accounting != null) return false;
+    if (item.intent != null) return item.intent == item.counts.submitted;
+    return status != null &&
+        status.preparationId == item.preparation.id &&
+        status.canComplete &&
+        status.uploaded == item.counts.submitted;
+  }
+
+  Future<void> _completeSelectedPreparation() async {
+    final gateway = _offlineGateway;
+    final item = _selectedPreparation;
+    final account = _account;
+    final generation = _accountEpoch;
+    final epoch = _syncEpoch;
+    if (gateway == null ||
+        item == null ||
+        account == null ||
+        !_foreground ||
+        _scanBusy ||
+        !_mayComplete) {
+      return;
+    }
+    final id = item.preparation.id;
+    final count = item.intent ?? item.counts.submitted;
+    if (_offlinePreparation?.id == id) _exitOffline();
+    setState(() => _scanBusy = true);
+    bool valid() =>
+        _validScanAccount(account, generation) &&
+        _foreground &&
+        epoch == _syncEpoch &&
+        _statusPreparationId == id;
+    try {
+      final confirmation = DialogRoute<bool>(
+        context: context,
+        builder: (context) => AlertDialog(
+          title: const Text('Confirm immutable completion'),
+          content: Text(
+            '${item.preparation.title}\nPreparation: $id\n'
+            'Acknowledged claims: $count\n'
+            'This stops new capture for this preparation. This declaration '
+            'is not proof of all evidence or accepted attendance.',
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context, false),
+              child: const Text('Cancel'),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.pop(context, true),
+              child: const Text('Declare completion'),
+            ),
+          ],
+        ),
+      );
+      _offlineConfirmationRoute = confirmation;
+      final confirmed = await Navigator.of(
+        context,
+        rootNavigator: true,
+      ).push(confirmation);
+      if (identical(_offlineConfirmationRoute, confirmation)) {
+        _offlineConfirmationRoute = null;
+      }
+      if (confirmed != true || !valid()) return;
+      setState(() => _preparationStatus = null);
+      final message = await gateway.completePreparation(id, count, valid);
+      if (!valid()) return;
+      setState(() => _scanMessage = message);
+      await _refreshScanRecords(account);
+    } catch (_) {
+      if (valid()) {
+        setState(
+          () =>
+              _scanMessage = 'Completion not confirmed. Reload local evidence.',
+        );
+      }
+    } finally {
+      if (_validScanAccount(account, generation)) {
+        setState(() => _scanBusy = false);
+      }
+    }
+  }
+
   Future<void> _syncOffline() async {
     final gateway = _offlineGateway;
     final account = _account;
@@ -856,6 +1074,7 @@ class _StaffWorkspaceState extends State<StaffWorkspace>
       _scanMessage = null;
     });
     try {
+      setState(() => _preparationStatus = null);
       final message = await gateway.syncOffline(
         (counts) {
           if (!_validScanAccount(account, generation)) return;
@@ -1242,6 +1461,89 @@ class _StaffWorkspaceState extends State<StaffWorkspace>
                     : () => _refreshScanRecords(_account!),
                 child: const Text('Reload local evidence'),
               ),
+              if (_preparations.isNotEmpty) ...[
+                const Text('Preparation accounting — local and server'),
+                DropdownButton<String>(
+                  isExpanded: true,
+                  value: _statusPreparationId,
+                  hint: const Text('Select preparation for status'),
+                  items: [
+                    for (final item in _preparations)
+                      DropdownMenuItem(
+                        value: item.preparation.id,
+                        child: Text(
+                          '${item.preparation.title}\n${item.preparation.id}',
+                          maxLines: 2,
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                      ),
+                  ],
+                  onChanged: _scanBusy
+                      ? null
+                      : (id) => setState(() {
+                          _statusPreparationId = id;
+                          _preparationStatus = null;
+                        }),
+                ),
+                Wrap(
+                  children: [
+                    TextButton(
+                      onPressed: _scanBusy || _preparationOffset == 0
+                          ? null
+                          : () => _pagePreparations(_preparationOffset - 10),
+                      child: const Text('Previous preparations'),
+                    ),
+                    TextButton(
+                      onPressed: _scanBusy || _preparations.length < 10
+                          ? null
+                          : () => _pagePreparations(_preparationOffset + 10),
+                      child: const Text('Next preparations'),
+                    ),
+                  ],
+                ),
+                if (_selectedPreparation case final item?) ...[
+                  Text(
+                    'Local: ${item.counts.queued} queued, '
+                    '${item.counts.blocked} blocked, ${item.counts.submitted} submitted',
+                  ),
+                  if (item.intent != null)
+                    Text(
+                      'Saved declaration: ${item.intent} acknowledged claims',
+                    ),
+                  if (item.intent != null && item.accounting == null)
+                    const Text('Completion unconfirmed — capture stopped.'),
+                  if (item.accounting != null)
+                    Text(
+                      'Retained server accounting: ${item.accounting!.disposition}; '
+                      '${item.accounting!.uploaded} uploaded',
+                    ),
+                  if (item.accounting != null &&
+                      item.accounting!.declared != item.counts.submitted)
+                    const Text(
+                      'Accounting differs from local evidence. Contact support.',
+                    ),
+                  if (_preparationStatus case final status?)
+                    Text(
+                      'Server: ${status.eventState}; ${status.uploaded} durable claims; '
+                      '${status.accounting?.disposition ?? "unaccounted"}'
+                      '${status.sealedAt != null ? " — sealed" : ""}',
+                    ),
+                  OutlinedButton(
+                    onPressed: _scanBusy ? null : _checkPreparationStatus,
+                    child: const Text('Check server status (online)'),
+                  ),
+                  OutlinedButton(
+                    onPressed: _scanBusy || !_mayComplete
+                        ? null
+                        : _completeSelectedPreparation,
+                    child: Text(
+                      item.intent == null
+                          ? 'Complete preparation (online)'
+                          : 'Retry saved declaration (online)',
+                    ),
+                  ),
+                ],
+              ],
               if (_offlineRecords.isNotEmpty) ...[
                 Text(
                   'Offline claims ${_offlineOffset + 1}–'

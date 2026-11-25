@@ -52,6 +52,59 @@ void main() {
     await directory.delete(recursive: true);
   });
 
+  test('version 2 migration retains claims and immutable intent survives key failure', () async {
+    final guard = prepare(fixture);
+    final claim = capture(guard, 'SYNTHETIC-MIGRATION');
+    await store.close();
+    final database = sqlite3.open(databasePath);
+    final key = keys.values[SecureAttendanceStore.encryptionKeyName]!;
+    database.execute("PRAGMA key = \"x'$key'\";");
+    database.execute('DROP TABLE offline_accounting;');
+    database.execute('PRAGMA user_version = 2;');
+    database.close();
+    store = await open();
+    expect(
+      store.readQueuedOffline(preparationA).single.parameters,
+      claim.parameters,
+    );
+    expect(store.preparationSummary(preparationA).intent, isNull);
+    expect(
+      () => store.persistCompletionIntent(preparationA, 0),
+      throwsStateError,
+    );
+    store.acknowledgeOffline(
+      claim,
+      OfflineAcknowledgement(fixture.issued, false),
+    );
+    store.persistCompletionIntent(preparationA, 1);
+    expect(
+      () => store.persistCompletionIntent(preparationA, 0),
+      throwsStateError,
+    );
+    expect(
+      () => capture(guard, 'SYNTHETIC-LATE'),
+      throwsA(isA<OfflineCaptureException>()),
+    );
+    await store.close();
+    final bytes = await File(databasePath).readAsBytes();
+    await expectLater(open(keyStore: MemorySecureValues()), throwsStateError);
+    expect(await File(databasePath).readAsBytes(), bytes);
+    store = await open(staff: staffB);
+    expect(store.preparations(), isEmpty);
+    expect(
+      () => store.persistCompletionIntent(preparationA, 1),
+      throwsStateError,
+    );
+    await store.close();
+    store = await open();
+    expect(store.preparationSummary(preparationA).intent, 1);
+    expect(store.preparationSummary(preparationA).counts.submitted, 1);
+    expect(
+      () => capture(guard, 'SYNTHETIC-LATE'),
+      throwsA(isA<OfflineCaptureException>()),
+    );
+  });
+
   test('version 1 migration preserves online and legacy evidence', () async {
     final pending = await store.createPending(
       eventId: eventId,
@@ -74,6 +127,7 @@ void main() {
     final database = sqlite3.open(databasePath);
     final key = keys.values[SecureAttendanceStore.encryptionKeyName]!;
     database.execute("PRAGMA key = \"x'$key'\";");
+    database.execute('DROP TABLE offline_accounting;');
     database.execute('DROP TABLE offline_claims;');
     database.execute('DROP TABLE offline_preparations;');
     database.execute('DROP TABLE offline_requests;');
@@ -103,7 +157,7 @@ void main() {
     await store.close();
     final migrated = sqlite3.open(databasePath);
     migrated.execute("PRAGMA key = \"x'$key'\";");
-    expect(migrated.select('PRAGMA user_version;').single.values.single, 2);
+    expect(migrated.select('PRAGMA user_version;').single.values.single, 3);
     expect(
       migrated
           .select("SELECT student_id FROM attendance_scans WHERE legacy = 1;")

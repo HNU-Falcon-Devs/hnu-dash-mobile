@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:hnu_dash_mobile/offline_capture.dart';
+import 'package:hnu_dash_mobile/offline_completion.dart';
 import 'package:hnu_dash_mobile/scan_ingestion.dart';
 import 'package:hnu_dash_mobile/staff_workspace.dart';
 
@@ -18,6 +19,10 @@ class OfflineWidgetGateway extends FakeScanGateway
   int syncCalls = 0;
   int saved = 0;
   int submitted = 0;
+  bool accountingEnabled = false;
+  int statusCalls = 0;
+  int completionCalls = 0;
+  OfflineAccounting? accounting;
 
   @override
   void invalidateOffline() => activePreparation = null;
@@ -26,6 +31,60 @@ class OfflineWidgetGateway extends FakeScanGateway
   Future<void> close() async {
     invalidateOffline();
     await super.close();
+  }
+
+  @override
+  void suspendOffline() {}
+
+  @override
+  Future<bool> resumeOffline(
+    String preparationId,
+    bool Function() shouldContinue,
+  ) async => shouldContinue() && activePreparation?.id == preparationId;
+
+  @override
+  List<OfflinePreparationSummary> preparations({int offset = 0}) =>
+      accountingEnabled && preparationCalls > 0 && offset == 0
+      ? [
+          OfflinePreparationSummary(
+            fixture.parse(requestId),
+            offlineCounts(),
+            null,
+            accounting,
+          ),
+        ]
+      : [];
+
+  @override
+  Future<OfflinePreparationStatus> preparationStatus(
+    String preparationId,
+    bool Function() shouldContinue,
+  ) async {
+    statusCalls++;
+    return OfflinePreparationStatus(
+      preparationId: preparationId,
+      eventState: 'OPEN',
+      uploaded: submitted,
+      sealedAt: null,
+      accounting: accounting,
+      canUpload: accounting == null,
+      canComplete: accounting == null,
+    );
+  }
+
+  @override
+  Future<String> completePreparation(
+    String preparationId,
+    int count,
+    bool Function() shouldContinue,
+  ) async {
+    expect(shouldContinue(), isTrue);
+    expect(preparationId, preparationA);
+    expect(count, submitted);
+    completionCalls++;
+    accounting = OfflineAccounting('completed', count, count, fixture.issued);
+    invalidateOffline();
+    return 'Preparation completed on the server.';
   }
 
   @override
@@ -100,6 +159,71 @@ class OfflineWidgetGateway extends FakeScanGateway
 }
 
 void main() {
+  testWidgets(
+    'zero claim completion requires explicit status and confirmation',
+    (tester) async {
+      final fixture = OfflineFixture(DateTime.utc(2026, 11, 24, 6));
+      final gateway = FakeGateway(staffA)
+        ..assigned = [
+          StaffEvent(
+            eventId,
+            'Synthetic Assembly',
+            fixture.starts,
+            fixture.ends,
+            'OPEN',
+            assignmentId: assignmentA,
+            offlineEnabled: true,
+            uploadCutoff: fixture.cutoff,
+          ),
+        ]
+        ..configured = [
+          Checkpoint(
+            checkpointId,
+            'Entrance',
+            'IN',
+            fixture.starts,
+            fixture.closes,
+          ),
+        ];
+      final scans = OfflineWidgetGateway(fixture)..accountingEnabled = true;
+      addTearDown(gateway.close);
+      await tester.pumpWidget(buildApp(gateway, scanGateway: scans));
+      await tester.pumpAndSettle();
+      Future<void> tap(String label) async {
+        final target = find.text(label);
+        await tester.scrollUntilVisible(target, 150);
+        await tester.tap(target);
+        await tester.pump();
+        await tester.pump(const Duration(milliseconds: 500));
+      }
+
+      await tap('Synthetic Assembly');
+      await tap('Prepare offline (online)');
+      await tap('Select preparation for status');
+      await tester.tap(find.text('Synthetic Assembly\n$preparationA').last);
+      await tester.pumpAndSettle();
+      expect(scans.completionCalls, 0);
+      await tap('Check server status (online)');
+      expect(scans.statusCalls, 1);
+      await tap('Complete preparation (online)');
+      expect(find.text('Confirm immutable completion'), findsOneWidget);
+      expect(scans.completionCalls, 0);
+      await tester.tap(find.text('Cancel'));
+      await tester.pumpAndSettle();
+      expect(scans.completionCalls, 0);
+      await tap('Complete preparation (online)');
+      await tester.tap(find.text('Declare completion'));
+      await tester.pumpAndSettle();
+      expect(scans.completionCalls, 1);
+      expect(
+        find.textContaining('Retained server accounting: completed'),
+        findsOneWidget,
+      );
+      await tester.pumpWidget(const SizedBox.shrink());
+      await tester.pumpAndSettle();
+    },
+  );
+
   testWidgets('offline requires explicit preparation, mode, consent and sync', (
     tester,
   ) async {

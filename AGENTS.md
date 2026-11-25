@@ -19,10 +19,14 @@
 
 ## Authorized M4.3A offline foundation
 
-- [Mobile #14](https://github.com/HNU-Falcon-Devs/hnu-dash-mobile/issues/14) authorizes the synthetic-only foundation against the [merged M4.1 contract](https://github.com/HNU-Falcon-Devs/hnu-dash-backend/blob/13788b8b78c22f31deb269aa1296612936650941/docs/integration/milestone-4-part-1-offline-evidence.md). Use only `prepare_offline_capture` and `submit_offline_capture`; no M4.2 review, reconciliation or completion API.
+- [Mobile #14](https://github.com/HNU-Falcon-Devs/hnu-dash-mobile/issues/14) authorizes the synthetic-only foundation against the [merged M4.1 contract](https://github.com/HNU-Falcon-Devs/hnu-dash-backend/blob/13788b8b78c22f31deb269aa1296612936650941/docs/integration/milestone-4-part-1-offline-evidence.md). Use `prepare_offline_capture` and `submit_offline_capture` for capture and upload. [Mobile #16](https://github.com/HNU-Falcon-Devs/hnu-dash-mobile/issues/16) adds only accepted M4.2 Staff status and completion RPCs; no Manager API or per-claim review.
 - Prepare explicitly while online and persist the preparation request UUID before dispatch. Check all response scope and schedule fields; require a conservative elapsed-time bound anchored to the original request. A replay after process restart cannot establish a new time anchor. Device time is untrusted evidence, never proof of eligibility.
 - Enter offline mode explicitly. Capture camera-only synthetic IDs with confirmation and immutable UUID/payload. Persist separately from online scans in the same encrypted store; pending online attempts block offline capture. Keep queued and blocked evidence across account changes and failures. The 2,400 unresolved-claim installation limit is a synthetic development guard, not a production policy.
 - Foreground sync is explicit and sequential within one explicitly selected preparation. Retain denied claims; never automatically advance to another preparation or delete evidence. Pin the authenticated owner, bearer and encrypted store for each request. Preserve the exact UUID and payload through ambiguity; only a validated server acknowledgement marks a claim submitted for review. No automatic upload, roster cache, camera image retention or declaration of accepted attendance.
+
+## M4.3B preparation accounting
+
+- Explicit online status before resuming capture; never renew the original time anchor. Stop capture for known terminal state, unsafe status or persisted completion intent. Completion compares all local distinct submitted claims with server count, requires zero queued/blocked, explicit confirmation, and immutable account-scoped intent before dispatch. Retain intent and evidence after uncertainty; retry the same preparation/count. No declaration of all devices synchronized or attendance accepted.
 
 ## Encrypted storage and account isolation
 
