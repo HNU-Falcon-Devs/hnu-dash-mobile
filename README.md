@@ -1,6 +1,6 @@
 # HNU DASH Mobile
 
-Flutter Android companion for HNU DASH. M2.5 adds a **development-only, online attendance-scanning workflow** to the authenticated Staff workspace:
+Flutter Android companion for HNU DASH. As of 2026-11-26, M4.3A/B synthetic offline capture, upload and preparation accounting are merged; [post-merge CI](https://github.com/HNU-Falcon-Devs/hnu-dash-mobile/actions/runs/45547158608) passed 91 tests, APK build and SQLCipher ABI verification. The existing M2.5 **development-only online workflow** remains:
 
 1. Select an assigned event whose Backend state is `OPEN`.
 2. Select one of that event's configured IN/OUT checkpoints.
@@ -65,7 +65,7 @@ The authorized [Mobile #14](https://github.com/HNU-Falcon-Devs/hnu-dash-mobile/i
 4. Select one preparation explicitly and sync its queued claims in the foreground, in insertion order. A denial pauses only that selected pass; the original evidence remains queued and another preparation may be explicitly selected. No automatic skipping or deletion. Each claim uses the original immutable payload and UUID with the current owner's pinned bearer. A lost or malformed response retains the claim for replay; terminal conflicts are preserved for support. Submission is not acceptance, review completion, or finalized attendance.
 5. Restart or sign-out clears the in-memory time anchor. A recovered preparation replay without the original anchor cannot enable capture. Obtain a new server-permitted preparation; existing claims remain available to their original owner for explicit sync. The client does not use device time to reject a legitimate upload replay.
 
-Schema v2 adds separate offline request, preparation and claim tables transactionally; existing online and unassigned legacy evidence remains intact. No production retention, recovery, physical QR, or shared-device policy is established.
+Schema v2 introduced separate offline request, preparation and claim tables; M4.3B schema v3 adds durable completion intent and accounting transactionally. Existing online and unassigned legacy evidence remains intact. No production retention, recovery, physical QR or shared-device policy is established.
 
 ## Encrypted attendance storage and migration
 
@@ -79,11 +79,11 @@ The SQLCipher community build bundled by `sqlite3` has its own licensing terms a
 
 **Use synthetic Student IDs exclusively. Do not collect real student identifiers or process real attendance until the remaining retention, recovery, and device-security requirements are formally approved.** The client rejects non-synthetic identifiers at scanner, workspace, RPC gateway, and new encrypted-record creation. There is no release switch to accept real IDs. This client-side guard is only a development safeguard, **not a security boundary** against a modified client. Existing legacy/unassigned rows are preserved but never submitted. Previously pending non-synthetic records are retained for support and cannot be retried. Encryption and account scoping do not approve production collection or resolve key-loss recovery, retention, or shared-device operational policy.
 
-## M2.6 integration QA status (2026-11-17)
+## Integration QA status (2026-11-26)
 
-The last merged M2.5 code passed [GitHub Actions run #42571447633](https://github.com/HNU-Falcon-Devs/hnu-dash-mobile/actions/runs/42571447633), including Flutter tests, Android debug APK build, and SQLCipher native-library inspection. **This is not independent physical-device or Mobile–Backend integration verification.** M2.6 Part B independently verified synthetic Web–Backend event lifecycle, authorization, revocation and online scan receipts using authenticated API requests; the actual Flutter application was not exercised.
+[Mobile #7](https://github.com/HNU-Falcon-Devs/hnu-dash-mobile/issues/7#issuecomment-7110814051) accepted bounded synthetic online Android–Backend integration on Mobile `e4e5e6ee` and Backend `88104382`: actual synthetic camera scans, online authorization/revocation, network loss and same-UUID replay. This is historical device evidence, not physical testing of the current M4 APK. [Web #24](https://github.com/HNU-Falcon-Devs/hnu-dash-web/issues/24#issuecomment-7135489451) accepted the online browser/RPC lifecycle, not Mobile runtime.
 
-**Next:** [Mobile issue #7 — M2.6 Part C](https://github.com/HNU-Falcon-Devs/hnu-dash-mobile/issues/7) tracks Flutter/Android device QA against an isolated Backend with synthetic accounts and QR fixtures. See the [cross-repository M2.6 status](https://github.com/HNU-Falcon-Devs/hnu-dash-backend/blob/main/docs/qa/m2-6-integration-status.md) (introduced in the corresponding Backend documentation PR).
+**Next:** [Backend #19](https://github.com/HNU-Falcon-Devs/hnu-dash-backend/issues/19) covers browser/RPC/database offline integration with Mobile as a pinned reference only. Separately authorized physical offline QA and [Mobile #13](https://github.com/HNU-Falcon-Devs/hnu-dash-mobile/issues/13) (account switch and key-loss/security gaps) remain outstanding. See the [historical cross-repository M2.6 status](https://github.com/HNU-Falcon-Devs/hnu-dash-backend/blob/main/docs/qa/m2-6-integration-status.md) and issue adjudications.
 
 ## Validation
 
@@ -99,7 +99,7 @@ The test suite exercises SQLCipher key verification, ciphertext inspection, lega
 
 Canonical Backend contracts: [M2.1 Staff assignment](https://github.com/HNU-Falcon-Devs/hnu-dash-backend/blob/main/docs/integration/milestone-2-part-1.md) and [M2.3 online ingestion](https://github.com/HNU-Falcon-Devs/hnu-dash-backend/blob/main/docs/integration/milestone-2-part-3-scan-ingestion.md). M2.5 defines the **synthetic development input** expected by the current scanner; it does **not** establish the physical HNU ID QR encoding. The [physical QR specification decision](https://github.com/HNU-Falcon-Devs/hnu-dash-backend/issues/9) is pending. Historical closed Backend PR #2 is superseded.
 
-Independent physical-device verification remains required for Google OAuth callback/session restoration, camera permission grant/denial/recovery, **synthetic** QR scanning, SQLCipher on a target Android device, and Mobile–Backend revocation/replay behavior. Real HNU ID decoding requires an approved QR specification and is not authorized in development QA. Do not deploy for real attendance until the separate release gates are approved.
+Current-revision physical offline QA and targeted residual device-security checks remain required; do not repeat historical online device acceptance merely to recreate receipts. Real HNU ID decoding requires an approved QR specification and is not authorized in development QA. Do not deploy for real attendance until separate release gates are approved.
 
 ## M4.3B Staff preparation accounting
 
