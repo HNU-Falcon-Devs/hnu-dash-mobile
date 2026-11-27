@@ -42,7 +42,9 @@ String v2Text(Object? raw) {
 }
 
 int? _elapsed(Object? value) =>
-    value is int && value >= -_maxSafeInteger && value <= _maxSafeInteger ? value : null;
+    value is int && value >= -_maxSafeInteger && value <= _maxSafeInteger
+    ? value
+    : null;
 
 String? _boot(Object? value) =>
     value is String && _bootPattern.hasMatch(value) ? value : null;

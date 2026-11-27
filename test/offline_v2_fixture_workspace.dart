@@ -132,7 +132,10 @@ class _OfflineV2FixtureWorkspaceState extends State<OfflineV2FixtureWorkspace>
     );
     _activeRoute = route;
     try {
-      final confirmed = await Navigator.of(context, rootNavigator: true).push(route);
+      final confirmed = await Navigator.of(
+        context,
+        rootNavigator: true,
+      ).push(route);
       return confirmed == true && mounted && controller.accountAvailable;
     } finally {
       if (identical(_activeRoute, route)) _activeRoute = null;
@@ -151,7 +154,10 @@ class _OfflineV2FixtureWorkspaceState extends State<OfflineV2FixtureWorkspace>
         ),
       );
       _activeRoute = route;
-      final result = await Navigator.of(context, rootNavigator: true).push(route);
+      final result = await Navigator.of(
+        context,
+        rootNavigator: true,
+      ).push(route);
       if (identical(_activeRoute, route)) _activeRoute = null;
       final pending = observation;
       if (!mounted ||

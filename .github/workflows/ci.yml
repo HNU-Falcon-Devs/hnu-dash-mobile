@@ -21,28 +21,7 @@ jobs:
       - name: Resolve dependencies
         run: flutter pub get
       - name: Check Dart formatting
-        run: |
-          dart format --output=none --set-exit-if-changed . || {
-            dart format .
-            python3 - <<'PY'
-          import base64
-          from pathlib import Path
-          paths = [
-              "lib/offline_v2.dart",
-              "lib/offline_v2_gateway.dart",
-              "lib/secure_attendance_store.dart",
-              "lib/secure_attendance_v2.dart",
-              "lib/student_qr_scanner.dart",
-              "test/offline_v2_fixture_workspace.dart",
-              "test/offline_v2_test.dart",
-          ]
-          for path in paths:
-              data = base64.b64encode(Path(path).read_bytes()).decode()
-              for offset in range(0, len(data), 2000):
-                  print("M1FORMAT", path, offset, data[offset:offset+2000])
-          PY
-            exit 1
-          }
+        run: dart format --output=none --set-exit-if-changed .
       - name: Analyze
         run: flutter analyze
       - name: Install SQLite library for persistence tests
