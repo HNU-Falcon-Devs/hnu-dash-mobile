@@ -61,3 +61,21 @@ flutter build apk --debug
 ```
 
 Mobile Maintainer reviews implementation and CI independently; WhiteTree Orchestrator decides cross-repository architecture and scope; the human owner makes the final merge decision.
+
+## Authorized M1 successor fixture consumer
+
+[Backend #27 M1 package](https://github.com/HNU-Falcon-Devs/hnu-dash-backend/issues/27#issuecomment-7226350590)
+and [owner approval](https://github.com/HNU-Falcon-Devs/hnu-dash-backend/issues/27#issuecomment-7226560645)
+authorize only the fixture-only policy 2 consumer against the pinned B1/B2
+contracts at Backend `c53cbdcfab92d99857f91de1b7046856e7e63de2`.
+The ordinary v1 paths and all their constraints remain in effect.
+Policy 2 uses its own SQLCipher tables, evidence, status and accounting
+RPCs. Never route an ordinary event or a legacy queue through policy 2.
+Only explicit test/harness dependency injection can supply successor scope.
+No runtime flag, normal navigation, new offline login or discovery contract.
+Schedule warnings are advisory; original clock evidence is retained even
+when uncertain. A securely restored same-owner original preparation may
+resume locally until a known terminal state or completion intent. No new
+upload during collection, no local attendance verdict, no replay re-anchor,
+no automatic deletion or reattribution. Physical clock/device and coordinated
+activation acceptance remain separate.

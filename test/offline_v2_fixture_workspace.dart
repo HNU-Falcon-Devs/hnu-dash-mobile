@@ -206,7 +206,7 @@ class _OfflineV2FixtureWorkspaceState extends State<OfflineV2FixtureWorkspace>
                     },
             ),
             Text('Installation unresolved: ${controller.installationUnresolved} / 2400'),
-            if (saved == null)
+            if (saved == null || counts == null)
               FilledButton(
                 onPressed: _busy || _selected == null
                     ? null
@@ -215,7 +215,7 @@ class _OfflineV2FixtureWorkspaceState extends State<OfflineV2FixtureWorkspace>
               )
             else ...[
               Text('Preparation: ${saved.preparation.id}'),
-              Text('Queued: ${counts!.queued}; attempted: ${counts.attempted}; '
+              Text('Queued: ${counts.queued}; attempted: ${counts.attempted}; '
                   'submitted: ${counts.submitted}; blocked: ${counts.blocked}'),
               Text('Accounting: ${saved.disposition ?? 'not declared'}'),
               if (saved.intent != null) Text('Retained completion count: ${saved.intent}'),

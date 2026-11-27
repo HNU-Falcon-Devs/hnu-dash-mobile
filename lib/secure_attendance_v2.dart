@@ -593,6 +593,9 @@ extension OfflineV2Store on SecureAttendanceStore {
         throw StateError('Original completion intent unavailable.');
       }
       final receipt = v2Completion(raw, id, staffUserId, count);
+      if (offlineInstant(receipt['accounted_at']).isBefore(saved.preparation.issued)) {
+        throw const FormatException('Completion predates preparation.');
+      }
       if (saved.completionReceipt != null) {
         final prior = saved.completionReceipt!;
         if (prior['accounted_at'] != receipt['accounted_at']) {
