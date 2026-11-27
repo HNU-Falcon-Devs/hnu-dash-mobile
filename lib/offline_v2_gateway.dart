@@ -85,6 +85,7 @@ class OfflineV2Controller {
   bool _collecting = false;
   bool _invalidated = false;
   bool _busy = false;
+  bool _captureOperation = false;
   int _networkEpoch = 0;
   int _segment = 0;
   V2PendingQr? _pending;
@@ -151,12 +152,13 @@ class OfflineV2Controller {
   }
 
   /// A new controller and newly opened owner-bound handle are required after
-  /// sign-out/account change; the harness closes the original handle.
-  void invalidate() {
+  /// sign-out/account change; close the original handle without deleting data.
+  Future<void> invalidate() async {
     suspend();
     _invalidated = true;
     _selected = null;
     _scope = null;
+    await _store.close();
   }
 
   void _ensureNetwork(int epoch) {
@@ -170,7 +172,9 @@ class OfflineV2Controller {
     _ensureIdle();
     final epoch = _networkEpoch;
     _ensureNetwork(epoch);
-    if (_collecting) throw StateError('Stop collecting before online actions.');
+    if (_collecting || _captureOperation) {
+      throw StateError('Stop collecting before online actions.');
+    }
     _busy = true;
     try {
       return await operation(epoch);
@@ -284,11 +288,18 @@ class OfflineV2Controller {
   /// No live session lookup or RPC is performed in the capture path.
   Future<V2PendingQr> observeQr(String studentId) async {
     final checkpoint = _captureContext();
-    if (!isApprovedDevelopmentStudentId(studentId) || _pending != null) {
+    if (!isApprovedDevelopmentStudentId(studentId) ||
+        _pending != null || _captureOperation) {
       throw StateError('Approved synthetic QR required.');
     }
     final segment = _segment;
-    final qr = await _clock();
+    _captureOperation = true;
+    final V2Observation qr;
+    try {
+      qr = await _clock();
+    } finally {
+      _captureOperation = false;
+    }
     _captureContext();
     if (_segment != segment || _pending != null) {
       throw StateError('Collection segment changed.');
@@ -320,7 +331,7 @@ class OfflineV2Controller {
 
   Future<V2Claim> confirm(V2PendingQr pending) async {
     _captureContext();
-    if (!identical(_pending, pending) ||
+    if (_captureOperation || !identical(_pending, pending) ||
         (pending.warning != null && !_warningAccepted)) {
       throw StateError('Explicit warning continuation and confirmation required.');
     }
@@ -329,7 +340,13 @@ class OfflineV2Controller {
     // Prevent duplicate confirmation even while the native clock is sampled.
     _pending = null;
     _warningAccepted = false;
-    final confirmation = await _clock();
+    _captureOperation = true;
+    final V2Observation confirmation;
+    try {
+      confirmation = await _clock();
+    } finally {
+      _captureOperation = false;
+    }
     _captureContext();
     if (_segment != segment || _selected != id) {
       throw StateError('Collection segment changed.');

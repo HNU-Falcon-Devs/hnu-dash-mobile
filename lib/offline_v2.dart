@@ -68,6 +68,11 @@ class V2Observation {
 
   factory V2Observation.fromJson(Object? raw) {
     final value = v2Object(raw, {'elapsed_ms', 'boot', 'wall_at'});
+    if ((value['elapsed_ms'] != null && _elapsed(value['elapsed_ms']) == null) ||
+        (value['boot'] != null && _boot(value['boot']) == null)) {
+      throw const FormatException('Invalid stored clock observation.');
+    }
+    if (value['wall_at'] != null) offlineInstant(value['wall_at']);
     return V2Observation(
       elapsedMs: value['elapsed_ms'] as int?,
       boot: value['boot'] as String?,
@@ -230,6 +235,9 @@ class V2Preparation {
         })) {
       throw const FormatException('Successor checkpoint scope mismatch.');
     }
+    value['checkpoints'] = List.unmodifiable(
+      (value['checkpoints'] as List).map((c) => Map.unmodifiable(c as Map)),
+    );
     return V2Preparation._(
       Map.unmodifiable(value),
       List.unmodifiable(checkpoints),
@@ -250,6 +258,9 @@ class V2Anchor {
     final provenance = value['provenance'];
     if (!['original', 'replayed', 'missing', 'unknown'].contains(provenance)) {
       throw const FormatException('Invalid anchor provenance.');
+    }
+    if ((provenance == 'original') != (value['response'] != null)) {
+      throw const FormatException('Invalid original response observation.');
     }
     return V2Anchor(
       V2Observation.fromJson(value['request']),
