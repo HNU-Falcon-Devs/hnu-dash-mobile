@@ -4,6 +4,12 @@ plugins {
     id("dev.flutter.flutter-gradle-plugin")
 }
 
+// Reject IDE/CLI signing injection; this repository has no approved release signer.
+val signingOverrides = listOf("store.file", "store.password", "key.alias", "key.password", "store.type", "v1-enabled", "v2-enabled")
+require(signingOverrides.none { providers.gradleProperty("android.injected.signing.$it").isPresent }) {
+    "Signing overrides are not authorized for development-only release verification."
+}
+
 android {
     namespace = "dev.hnudash.hnu_dash_mobile"
     compileSdk = flutter.compileSdkVersion
@@ -31,9 +37,8 @@ android {
 
     buildTypes {
         release {
-            // TODO: Add your own signing config for the release build.
-            // Signing with the debug keys for now, so `flutter run --release` works.
-            signingConfig = signingConfigs.getByName("debug")
+            // Development-only release-mode verification. No signing is authorized.
+            signingConfig = null
         }
     }
 }
