@@ -13,11 +13,17 @@ jobs:
       - uses: actions/checkout@v4
         with:
           persist-credentials: false
+          fetch-depth: 0
       - name: Pin exact candidate and install pinned SDK
         run: |
           set -euo pipefail
           candidate=5894a871d4d4353bc64e33fd85708d1c6988946c
-          test "$(git rev-parse HEAD^)" = "$candidate"
+          original_harness=1b4823c6cee38c97cdfe53f5512a364f4dba7b17
+          test "$(git rev-parse HEAD^)" = "$original_harness"
+          test "$(git rev-parse "$original_harness^")" = "$candidate"
+          git merge-base --is-ancestor "$candidate" HEAD
+          test "$(git rev-list --count "$candidate"..HEAD)" = 2
+          echo "Candidate ancestry verified: $candidate -> $original_harness -> $(git rev-parse HEAD)"
           test "$(git rev-parse "$candidate^{tree}")" = 74dab75712beb66fc163a911ca2cc1efcdfae1fa
           git diff --name-only "$candidate" HEAD
           test "$(git diff --name-only "$candidate" HEAD)" = .github/workflows/android-release-r1-qa.yml
