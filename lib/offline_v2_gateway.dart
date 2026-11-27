@@ -17,12 +17,11 @@ enum V2Rpc {
   final String nameOnServer;
 }
 
-typedef V2RpcCall =
-    Future<dynamic> Function(
-      V2Rpc operation,
-      Map<String, dynamic> parameters,
-      String bearer,
-    );
+typedef V2RpcCall = Future<dynamic> Function(
+  V2Rpc operation,
+  Map<String, dynamic> parameters,
+  String bearer,
+);
 
 Future<dynamic> pinnedV2Rpc(
   SupabaseClient client,
@@ -132,9 +131,10 @@ class OfflineV2Controller {
   void selectFixture(V2Scope scope) {
     _ensureIdle();
     stop();
-    _scope = scope;
+    _scope = null;
     _selected = null;
     _selected = _store.findV2Preparation(scope)?.preparation.id;
+    _scope = scope;
   }
 
   void stop() {
@@ -216,11 +216,16 @@ class OfflineV2Controller {
     final start = await _clock();
     _ensureNetwork(epoch);
     final request = _store.reserveV2Request(scope, start);
-    final raw = await _call(V2Rpc.prepare, {
-      'p_event_id': scope.eventId,
-      'p_assignment_id': scope.assignmentId,
-      'p_request_id': request.id,
-    }, session, epoch);
+    final raw = await _call(
+      V2Rpc.prepare,
+      {
+        'p_event_id': scope.eventId,
+        'p_assignment_id': scope.assignmentId,
+        'p_request_id': request.id,
+      },
+      session,
+      epoch,
+    );
     final end = await _clock();
     _ensureNetwork(epoch);
     final preparation = V2Preparation.parse(raw, scope, _owner, request.id);
@@ -289,7 +294,8 @@ class OfflineV2Controller {
   Future<V2PendingQr> observeQr(String studentId) async {
     final checkpoint = _captureContext();
     if (!isApprovedDevelopmentStudentId(studentId) ||
-        _pending != null || _captureOperation) {
+        _pending != null ||
+        _captureOperation) {
       throw StateError('Approved synthetic QR required.');
     }
     final segment = _segment;
@@ -331,9 +337,12 @@ class OfflineV2Controller {
 
   Future<V2Claim> confirm(V2PendingQr pending) async {
     _captureContext();
-    if (_captureOperation || !identical(_pending, pending) ||
+    if (_captureOperation ||
+        !identical(_pending, pending) ||
         (pending.warning != null && !_warningAccepted)) {
-      throw StateError('Explicit warning continuation and confirmation required.');
+      throw StateError(
+        'Explicit warning continuation and confirmation required.',
+      );
     }
     final segment = _segment;
     final id = _selected!;
@@ -370,9 +379,12 @@ class OfflineV2Controller {
   Future<V2Status> _status(String id, int epoch) async {
     try {
       final session = await _session(epoch);
-      final raw = await _call(V2Rpc.status, {
-        'p_preparation_id': id,
-      }, session, epoch);
+      final raw = await _call(
+        V2Rpc.status,
+        {'p_preparation_id': id},
+        session,
+        epoch,
+      );
       final status = V2Status.parse(raw, id);
       _store.recordV2Status(id, status);
       return status;
@@ -409,12 +421,7 @@ class OfflineV2Controller {
       final session = await _session(epoch);
       _store.markV2Attempted(claim);
       try {
-        final raw = await _call(
-          V2Rpc.submit,
-          claim.parameters,
-          session,
-          epoch,
-        );
+        final raw = await _call(V2Rpc.submit, claim.parameters, session, epoch);
         _store.acknowledgeV2(claim, raw);
       } on PostgrestException catch (error) {
         _ensureNetwork(epoch);
@@ -453,10 +460,12 @@ class OfflineV2Controller {
     }
     _store.persistV2CompletionIntent(id, confirmedCount);
     final session = await _session(epoch);
-    final raw = await _call(V2Rpc.complete, {
-      'p_preparation_id': id,
-      'p_acknowledged_count': confirmedCount,
-    }, session, epoch);
+    final raw = await _call(
+      V2Rpc.complete,
+      {'p_preparation_id': id, 'p_acknowledged_count': confirmedCount},
+      session,
+      epoch,
+    );
     _store.recordV2Completion(id, raw);
   });
 }

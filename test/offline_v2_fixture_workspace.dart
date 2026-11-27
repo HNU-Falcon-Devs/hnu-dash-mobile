@@ -33,6 +33,15 @@ class _OfflineV2FixtureWorkspaceState extends State<OfflineV2FixtureWorkspace>
   int? _selected;
   bool _busy = false;
   String? _message;
+  Route<dynamic>? _activeRoute;
+
+  void _dismissActiveRoute() {
+    final route = _activeRoute;
+    _activeRoute = null;
+    if (route != null && route.isActive) {
+      Navigator.of(context, rootNavigator: true).removeRoute(route);
+    }
+  }
 
   @override
   void initState() {
@@ -41,7 +50,10 @@ class _OfflineV2FixtureWorkspaceState extends State<OfflineV2FixtureWorkspace>
     _auth = widget.accountChanges.listen((_) {
       if (!controller.accountAvailable) {
         unawaited(controller.invalidate());
-        if (mounted) setState(() => _message = null);
+        if (mounted) {
+          _dismissActiveRoute();
+          setState(() => _message = null);
+        }
       }
     });
   }
@@ -50,7 +62,10 @@ class _OfflineV2FixtureWorkspaceState extends State<OfflineV2FixtureWorkspace>
   void didChangeAppLifecycleState(AppLifecycleState state) {
     if (state != AppLifecycleState.resumed) {
       controller.suspend();
-      if (mounted) setState(() {});
+      if (mounted) {
+        _dismissActiveRoute();
+        setState(() {});
+      }
     }
   }
 
@@ -72,8 +87,9 @@ class _OfflineV2FixtureWorkspaceState extends State<OfflineV2FixtureWorkspace>
       await action();
     } catch (_) {
       if (mounted && controller.accountAvailable) {
-        setState(() => _message =
-            'Operation not confirmed. Evidence retained; retry or contact support.');
+        setState(
+          () => _message = 'Operation not confirmed. Evidence retained; retry or contact support.',
+        );
       }
     } finally {
       if (mounted) setState(() => _busy = false);
@@ -88,13 +104,16 @@ class _OfflineV2FixtureWorkspaceState extends State<OfflineV2FixtureWorkspace>
     try {
       controller.selectFixture(widget.fixtures[index]);
     } catch (_) {
-      setState(() => _message = 'Original encrypted context unavailable.');
+      setState(() {
+        _selected = null;
+        _message = 'Original encrypted context unavailable.';
+      });
     }
   }
 
   Future<bool> _confirm(String title, String content, String action) async {
     if (!mounted || !controller.accountAvailable) return false;
-    return await showDialog<bool>(
+    final route = DialogRoute<bool>(
       context: context,
       builder: (context) => AlertDialog(
         title: Text(title),
@@ -110,22 +129,30 @@ class _OfflineV2FixtureWorkspaceState extends State<OfflineV2FixtureWorkspace>
           ),
         ],
       ),
-    ) == true;
+    );
+    _activeRoute = route;
+    try {
+      final confirmed = await Navigator.of(context, rootNavigator: true).push(route);
+      return confirmed == true && mounted && controller.accountAvailable;
+    } finally {
+      if (identical(_activeRoute, route)) _activeRoute = null;
+    }
   }
 
   Future<void> _scan() async {
     V2PendingQr? observation;
     try {
-      final result = await Navigator.of(context).push<String>(
-        MaterialPageRoute(
-          builder: (_) => StudentQrScannerPage(
-            scannerBuilder: widget.scannerBuilder,
-            onObservation: (id) async {
-              observation = await controller.observeQr(id);
-            },
-          ),
+      final route = MaterialPageRoute<String>(
+        builder: (_) => StudentQrScannerPage(
+          scannerBuilder: widget.scannerBuilder,
+          onObservation: (id) async {
+            observation = await controller.observeQr(id);
+          },
         ),
       );
+      _activeRoute = route;
+      final result = await Navigator.of(context, rootNavigator: true).push(route);
+      if (identical(_activeRoute, route)) _activeRoute = null;
       final pending = observation;
       if (!mounted ||
           !controller.accountAvailable ||
@@ -156,9 +183,9 @@ class _OfflineV2FixtureWorkspaceState extends State<OfflineV2FixtureWorkspace>
       if (!await _confirm(
         'Confirm local capture',
         '${saved.preparation.receipt['event_title']}\n'
-        '${checkpoint.label} (${checkpoint.direction})\n'
-        'Student ID: ${maskStudentId(pending.studentId)}\n'
-        'Save unverified evidence only, not attendance.',
+            '${checkpoint.label} (${checkpoint.direction})\n'
+            'Student ID: ${maskStudentId(pending.studentId)}\n'
+            'Save unverified evidence only, not attendance.',
         'Save locally',
       )) {
         return;
@@ -166,9 +193,11 @@ class _OfflineV2FixtureWorkspaceState extends State<OfflineV2FixtureWorkspace>
       final claim = await controller.confirm(pending);
       final clock = claim.parameters['p_clock'] as Map;
       if (mounted && controller.accountAvailable) {
-        setState(() => _message = clock['anomaly'] == 'none'
-            ? 'Saved locally. No upload or attendance decision.'
-            : 'Saved locally with uncertain timing. No attendance decision.');
+        setState(
+          () => _message = clock['anomaly'] == 'none'
+              ? 'Saved locally. No upload or attendance decision.'
+              : 'Saved locally with uncertain timing. No attendance decision.',
+        );
       }
     } finally {
       controller.cancelQr();
@@ -205,7 +234,9 @@ class _OfflineV2FixtureWorkspaceState extends State<OfflineV2FixtureWorkspace>
                       if (index != null) _select(index);
                     },
             ),
-            Text('Installation unresolved: ${controller.installationUnresolved} / 2400'),
+            Text(
+              'Installation unresolved: ${controller.installationUnresolved} / 2400',
+            ),
             if (saved == null || counts == null)
               FilledButton(
                 onPressed: _busy || _selected == null
@@ -215,17 +246,23 @@ class _OfflineV2FixtureWorkspaceState extends State<OfflineV2FixtureWorkspace>
               )
             else ...[
               Text('Preparation: ${saved.preparation.id}'),
-              Text('Queued: ${counts.queued}; attempted: ${counts.attempted}; '
-                  'submitted: ${counts.submitted}; blocked: ${counts.blocked}'),
+              Text(
+                'Queued: ${counts.queued}; attempted: ${counts.attempted}; '
+                'submitted: ${counts.submitted}; blocked: ${counts.blocked}',
+              ),
               Text('Accounting: ${saved.disposition ?? 'not declared'}'),
-              if (saved.intent != null) Text('Retained completion count: ${saved.intent}'),
+              if (saved.intent != null)
+                Text('Retained completion count: ${saved.intent}'),
               if (collecting) ...[
                 DropdownButton<String>(
                   hint: const Text('Select checkpoint'),
                   value: controller.selectedCheckpoint,
                   items: [
                     for (final c in saved.preparation.checkpoints)
-                      DropdownMenuItem(value: c.id, child: Text('${c.label} (${c.direction})')),
+                      DropdownMenuItem(
+                        value: c.id,
+                        child: Text('${c.label} (${c.direction})'),
+                      ),
                   ],
                   onChanged: _busy
                       ? null
@@ -253,10 +290,16 @@ class _OfflineV2FixtureWorkspaceState extends State<OfflineV2FixtureWorkspace>
                   child: const Text('Resume local collection'),
                 ),
                 OutlinedButton(
-                  onPressed: _busy ? null : () => _run(() async {
-                    final status = await controller.checkStatus();
-                    if (mounted) setState(() => _message = 'Server: ${status.state}; submitted: ${status.count}.');
-                  }),
+                  onPressed: _busy
+                      ? null
+                      : () => _run(() async {
+                          final status = await controller.checkStatus();
+                          if (mounted)
+                            setState(
+                              () => _message =
+                                  'Server: ${status.state}; submitted: ${status.count}.',
+                            );
+                        }),
                   child: const Text('Check server status'),
                 ),
                 FilledButton(
@@ -266,8 +309,11 @@ class _OfflineV2FixtureWorkspaceState extends State<OfflineV2FixtureWorkspace>
                   child: const Text('Synchronize selected preparation'),
                 ),
                 FilledButton(
-                  onPressed: _busy || counts.unresolved != 0 ||
-                      (saved.disposition != null && saved.disposition != 'completed')
+                  onPressed:
+                      _busy ||
+                          counts.unresolved != 0 ||
+                          (saved.disposition != null &&
+                              saved.disposition != 'completed')
                       ? null
                       : () => _run(() async {
                           final count = counts.submitted;
@@ -290,7 +336,9 @@ class _OfflineV2FixtureWorkspaceState extends State<OfflineV2FixtureWorkspace>
       );
     } catch (_) {
       return const Scaffold(
-        body: Center(child: Text('Secure context unavailable. Evidence retained.')),
+        body: Center(
+          child: Text('Secure context unavailable. Evidence retained.'),
+        ),
       );
     }
   }

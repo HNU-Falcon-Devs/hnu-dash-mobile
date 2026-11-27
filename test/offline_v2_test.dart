@@ -47,14 +47,23 @@ final scope = V2Scope(
   ],
 );
 
-V2Observation observation(int elapsed, {String? boot = 'boot_8', int? wallMs}) =>
-    V2Observation(
-      elapsedMs: elapsed,
-      boot: boot,
-      wallAt: issued.add(Duration(milliseconds: wallMs ?? elapsed - 1200)).toIso8601String(),
-    );
+V2Observation observation(
+  int elapsed, {
+  String? boot = 'boot_8',
+  int? wallMs,
+}) => V2Observation(
+  elapsedMs: elapsed,
+  boot: boot,
+  wallAt: issued
+      .add(Duration(milliseconds: wallMs ?? elapsed - 1200))
+      .toIso8601String(),
+);
 
-Map<String, dynamic> prepResponse(String request, {bool replayed = false, String state = 'DRAFT'}) => {
+Map<String, dynamic> prepResponse(
+  String request, {
+  bool replayed = false,
+  String state = 'DRAFT',
+}) => {
   'policy_version': 2,
   'preparation_id': preparationV2,
   'request_id': request,
@@ -63,8 +72,12 @@ Map<String, dynamic> prepResponse(String request, {bool replayed = false, String
   'assignment_id': assignmentV2,
   'staff_user_id': staffA,
   'issued_at': issued.toIso8601String(),
-  'assignment_assigned_at': issued.subtract(const Duration(minutes: 1)).toIso8601String(),
-  'roster_frozen_at': issued.subtract(const Duration(minutes: 2)).toIso8601String(),
+  'assignment_assigned_at': issued
+      .subtract(const Duration(minutes: 1))
+      .toIso8601String(),
+  'roster_frozen_at': issued
+      .subtract(const Duration(minutes: 2))
+      .toIso8601String(),
   'event_title': 'Synthetic assembly',
   'event_starts_at': issued.add(const Duration(minutes: 30)).toIso8601String(),
   'event_ends_at': issued.add(const Duration(hours: 4)).toIso8601String(),
@@ -118,7 +131,11 @@ class FakeV2Backend {
     'disposition': disposition,
   };
 
-  Future<dynamic> call(V2Rpc rpc, Map<String, dynamic> params, String bearer) async {
+  Future<dynamic> call(
+    V2Rpc rpc,
+    Map<String, dynamic> params,
+    String bearer,
+  ) async {
     expect(bearer, 'owner-token');
     calls.add(rpc);
     switch (rpc) {
@@ -137,7 +154,8 @@ class FakeV2Backend {
         return prepResponse(request, replayed: replay, state: state);
       case V2Rpc.status:
         expect(params, {'p_preparation_id': preparationV2});
-        if (denyStatus) throw const PostgrestException(message: 'denied', code: '42501');
+        if (denyStatus)
+          throw const PostgrestException(message: 'denied', code: '42501');
         return status();
       case V2Rpc.submit:
         sent.add(Map<String, dynamic>.from(params));
@@ -145,7 +163,10 @@ class FakeV2Backend {
         final payload = jsonEncode(params);
         final previous = claims[id];
         if (denySubmit != null) {
-          throw PostgrestException(message: 'synthetic denial', code: denySubmit);
+          throw PostgrestException(
+            message: 'synthetic denial',
+            code: denySubmit,
+          );
         }
         if (previous == null) {
           if (state != 'SYNCING' || sealed || disposition != null) {
@@ -186,7 +207,9 @@ class FakeV2Backend {
           'uploaded_count': count,
           'declared_count': count,
           'reason': null,
-          'accounted_at': issued.add(const Duration(hours: 6)).toIso8601String(),
+          'accounted_at': issued
+              .add(const Duration(hours: 6))
+              .toIso8601String(),
           'accounted_by': staffA,
           'replayed': replay,
         };
@@ -198,7 +221,10 @@ void main() {
   test('B1 response validates policy, exact scope, and DRAFT/OPEN context', () {
     for (final state in ['DRAFT', 'OPEN']) {
       final raw = prepResponse(requestId, state: state);
-      expect(V2Preparation.parse(raw, scope, staffA, requestId).id, preparationV2);
+      expect(
+        V2Preparation.parse(raw, scope, staffA, requestId).id,
+        preparationV2,
+      );
       for (final invalid in [
         {...raw, 'policy_version': 1},
         {...raw, 'staff_user_id': staffB},
@@ -208,7 +234,10 @@ void main() {
         {...raw, 'issued_at': '2027-01-01T00:00:00'},
         {...raw, 'unexpected': true},
       ]) {
-        expect(() => V2Preparation.parse(invalid, scope, staffA, requestId), throwsFormatException);
+        expect(
+          () => V2Preparation.parse(invalid, scope, staffA, requestId),
+          throwsFormatException,
+        );
       }
     }
   });
@@ -229,62 +258,104 @@ void main() {
       'anchor_provenance': 'original',
       'anomaly': 'none',
     });
-    expect(anchor.evidence(issued, observation(3200, boot: 'boot_9'), observation(3400, boot: 'boot_9'))['anomaly'], 'reboot');
-    expect(anchor.evidence(issued, observation(3200, boot: null), observation(3400))['anomaly'], 'missing');
-    expect(anchor.evidence(issued, observation(3200, wallMs: 100000), observation(3400))['anomaly'], 'clock_jump');
-    expect(anchor.evidence(issued, observation(3200), observation(40000))['anomaly'], 'inconsistent');
-    final replay = V2Anchor(observation(1000), null, 'replayed').evidence(issued, observation(3200), observation(3400));
+    expect(
+      anchor.evidence(
+        issued,
+        observation(3200, boot: 'boot_9'),
+        observation(3400, boot: 'boot_9'),
+      )['anomaly'],
+      'reboot',
+    );
+    expect(
+      anchor.evidence(
+        issued,
+        observation(3200, boot: null),
+        observation(3400),
+      )['anomaly'],
+      'missing',
+    );
+    expect(
+      anchor.evidence(
+        issued,
+        observation(3200, wallMs: 100000),
+        observation(3400),
+      )['anomaly'],
+      'clock_jump',
+    );
+    expect(
+      anchor.evidence(issued, observation(3200), observation(40000))['anomaly'],
+      'inconsistent',
+    );
+    final replay = V2Anchor(
+      observation(1000),
+      null,
+      'replayed',
+    ).evidence(issued, observation(3200), observation(3400));
     expect(replay['anchor_response_elapsed_ms'], isNull);
     expect(replay['anchor_provenance'], 'replayed');
     expect(replay['anomaly'], 'missing');
-    expect(() => validateV2Clock({...good, 'qr_elapsed_ms': 9007199254740992}), throwsFormatException);
+    expect(
+      () => validateV2Clock({...good, 'qr_elapsed_ms': 9007199254740992}),
+      throwsFormatException,
+    );
     expect(() => validateV2Clock({...good, 'extra': 0}), throwsFormatException);
   });
 
-  test('warnings are half-open, consecutive, checkpoint and segment scoped', () {
-    final warning = V2Warnings();
-    final cp = scope.checkpoints.first;
-    final early = observation(3200);
-    final onTime = observation(3601200);
-    final late = observation(7201200);
-    expect(warning.observe(cp, early), V2Warning.early);
-    warning.acknowledge();
-    expect(warning.observe(cp, early), isNull);
-    expect(warning.observe(cp, onTime), isNull);
-    expect(warning.observe(cp, early), V2Warning.early);
-    warning.acknowledge();
-    expect(warning.observe(cp, late), V2Warning.late);
-    warning.acknowledge();
-    expect(warning.observe(scope.checkpoints.last, early), V2Warning.early);
-    warning.acknowledge();
-    warning.reset();
-    expect(warning.observe(scope.checkpoints.last, early), V2Warning.early);
-    expect(warning.observe(cp, V2Observation()), V2Warning.unknown);
-  });
+  test(
+    'warnings are half-open, consecutive, checkpoint and segment scoped',
+    () {
+      final warning = V2Warnings();
+      final cp = scope.checkpoints.first;
+      final early = observation(3200);
+      final onTime = observation(3601200);
+      final late = observation(7201200);
+      expect(warning.observe(cp, early), V2Warning.early);
+      warning.acknowledge();
+      expect(warning.observe(cp, early), isNull);
+      expect(warning.observe(cp, onTime), isNull);
+      expect(warning.observe(cp, early), V2Warning.early);
+      warning.acknowledge();
+      expect(warning.observe(cp, late), V2Warning.late);
+      warning.acknowledge();
+      expect(warning.observe(scope.checkpoints.last, early), V2Warning.early);
+      warning.acknowledge();
+      warning.reset();
+      expect(warning.observe(scope.checkpoints.last, early), V2Warning.early);
+      expect(warning.observe(cp, V2Observation()), V2Warning.unknown);
+    },
+  );
 
-  test('four successor RPCs use exact endpoint names and pinned bearer', () async {
-    final observed = <String>[];
-    final client = SupabaseClient(
-      'https://project.example',
-      'sb_publishable_synthetic_test',
-      httpClient: MockClient((request) async {
-        observed.add(request.url.path);
-        expect(request.headers['authorization'], 'Bearer owner-token');
-        return http.Response('{}', 200, headers: {'content-type': 'application/json'}, request: request);
-      }),
-      accessToken: () async => 'other-token',
-    );
-    addTearDown(client.dispose);
-    for (final rpc in V2Rpc.values) {
-      await pinnedV2Rpc(client, rpc, {'synthetic': true}, 'owner-token');
-    }
-    expect(observed, [
-      '/rest/v1/rpc/prepare_offline_capture_v2',
-      '/rest/v1/rpc/get_offline_preparation_status_v2',
-      '/rest/v1/rpc/submit_offline_capture_v2',
-      '/rest/v1/rpc/complete_offline_preparation_v2',
-    ]);
-  });
+  test(
+    'four successor RPCs use exact endpoint names and pinned bearer',
+    () async {
+      final observed = <String>[];
+      final client = SupabaseClient(
+        'https://project.example',
+        'sb_publishable_synthetic_test',
+        httpClient: MockClient((request) async {
+          observed.add(request.url.path);
+          expect(request.headers['authorization'], 'Bearer owner-token');
+          return http.Response(
+            '{}',
+            200,
+            headers: {'content-type': 'application/json'},
+            request: request,
+          );
+        }),
+        accessToken: () async => 'other-token',
+      );
+      addTearDown(client.dispose);
+      for (final rpc in V2Rpc.values) {
+        await pinnedV2Rpc(client, rpc, {'synthetic': true}, 'owner-token');
+      }
+      expect(observed, [
+        '/rest/v1/rpc/prepare_offline_capture_v2',
+        '/rest/v1/rpc/get_offline_preparation_status_v2',
+        '/rest/v1/rpc/submit_offline_capture_v2',
+        '/rest/v1/rpc/complete_offline_preparation_v2',
+      ]);
+    },
+  );
 
   group('SQLCipher and fixture controller', () {
     late Directory directory;
@@ -299,13 +370,15 @@ void main() {
     late bool foreground;
     late int liveLookups;
 
-    Future<SecureAttendanceStore> open({String staff = staffA, MemorySecureValues? keyStore}) =>
-        SecureAttendanceStore.open(
-          databasePath: databasePath,
-          legacyDatabasePath: path.join(directory.path, 'legacy.db'),
-          staffUserId: staff,
-          keyStore: keyStore ?? keys,
-        );
+    Future<SecureAttendanceStore> open({
+      String staff = staffA,
+      MemorySecureValues? keyStore,
+    }) => SecureAttendanceStore.open(
+      databasePath: databasePath,
+      legacyDatabasePath: path.join(directory.path, 'legacy.db'),
+      staffUserId: staff,
+      keyStore: keyStore ?? keys,
+    );
 
     OfflineV2Controller bind() => OfflineV2Controller(
       store: store,
@@ -326,7 +399,11 @@ void main() {
       await controller.prepare();
     }
 
-    Future<V2Claim> capture({String id = '00000123456', int qr = 3603200, String? boot = 'boot_8'}) async {
+    Future<V2Claim> capture({
+      String id = '00000123456',
+      int qr = 3603200,
+      String? boot = 'boot_8',
+    }) async {
       clock.pair(qr, qr + 200, boot: boot);
       final pending = await controller.observeQr(id);
       if (pending.warning != null) controller.continueAfterWarning(pending);
@@ -369,189 +446,270 @@ void main() {
       final before = liveLookups;
       final claim = await capture();
       expect(claim.parameters['p_student_id'], '00000123456');
-      expect(claim.id, matches(RegExp(r'^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$')));
+      expect(
+        claim.id,
+        matches(
+          RegExp(
+            r'^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$',
+          ),
+        ),
+      );
       expect(claim.parameters['p_clock']['anomaly'], 'none');
       expect(liveLookups, before);
       expect(backend.calls, [V2Rpc.prepare]);
       expect(controller.counts!.queued, 1);
       expect(controller.installationUnresolved, 1);
-      expect(() => store.offlineRequest(eventId, assignmentA), throwsStateError);
-      await expectLater(store.createPending(eventId: eventId, checkpointId: checkpointId, studentId: 'SYNTHETIC-LEGACY'), throwsStateError);
+      expect(
+        () => store.offlineRequest(eventId, assignmentA),
+        throwsStateError,
+      );
+      await expectLater(
+        store.createPending(
+          eventId: eventId,
+          checkpointId: checkpointId,
+          studentId: 'SYNTHETIC-LEGACY',
+        ),
+        throwsStateError,
+      );
       await expectLater(controller.observeQr('REAL-123'), throwsStateError);
-      expect(store.unresolvedV2Claims(preparationV2).single.payload, claim.payload);
+      expect(
+        store.unresolvedV2Claims(preparationV2).single.payload,
+        claim.payload,
+      );
     });
 
-    test('same boot restart recovers; reboot and long overrun remain evidence', () async {
-      await prepare();
-      start();
-      final original = await capture();
-      await store.close();
-      store = await open();
-      controller = bind();
-      controller.selectFixture(scope);
-      expect(controller.collecting, isFalse);
-      expect(controller.selected!.anchor.response!.elapsedMs, 1200);
-      start();
-      final sameBoot = await capture(qr: 3604200);
-      expect(sameBoot.parameters['p_clock']['anomaly'], 'none');
-      final reboot = await capture(qr: 100, boot: 'boot_9');
-      expect(reboot.parameters['p_clock']['anomaly'], 'reboot');
-      final late = await capture(qr: 12 * 3600000 + 1200);
-      expect(late.parameters['p_clock']['qr_elapsed_ms'], 12 * 3600000 + 1200);
-      expect(store.unresolvedV2Claims(preparationV2).first.payload, original.payload);
-      expect(backend.calls, [V2Rpc.prepare]);
-    });
+    test(
+      'same boot restart recovers; reboot and long overrun remain evidence',
+      () async {
+        await prepare();
+        start();
+        final original = await capture();
+        await store.close();
+        store = await open();
+        controller = bind();
+        controller.selectFixture(scope);
+        expect(controller.collecting, isFalse);
+        expect(controller.selected!.anchor.response!.elapsedMs, 1200);
+        start();
+        final sameBoot = await capture(qr: 3604200);
+        expect(sameBoot.parameters['p_clock']['anomaly'], 'none');
+        final reboot = await capture(qr: 100, boot: 'boot_9');
+        expect(reboot.parameters['p_clock']['anomaly'], 'reboot');
+        final late = await capture(qr: 12 * 3600000 + 1200);
+        expect(
+          late.parameters['p_clock']['qr_elapsed_ms'],
+          12 * 3600000 + 1200,
+        );
+        expect(
+          store.unresolvedV2Claims(preparationV2).first.payload,
+          original.payload,
+        );
+        expect(backend.calls, [V2Rpc.prepare]);
+      },
+    );
 
-    test('lost preparation receipt replays request without fresh anchor', () async {
-      backend.losePrepare = true;
-      controller.selectFixture(scope);
-      clock.samples.add(observation(1000));
-      await expectLater(controller.prepare(), throwsA(isA<TimeoutException>()));
-      final original = backend.requestId;
-      await store.close();
-      store = await open();
-      controller = bind();
-      controller.selectFixture(scope);
-      clock.pair(9000, 9200);
-      await controller.prepare();
-      expect(backend.requestId, original);
-      expect(controller.selected!.anchor.request.elapsedMs, 1000);
-      expect(controller.selected!.anchor.response, isNull);
-      start();
-      final claim = await capture();
-      expect(claim.parameters['p_clock']['anchor_provenance'], 'replayed');
-      expect(claim.parameters['p_clock']['anchor_response_elapsed_ms'], isNull);
-    });
+    test(
+      'lost preparation receipt replays request without fresh anchor',
+      () async {
+        backend.losePrepare = true;
+        controller.selectFixture(scope);
+        clock.samples.add(observation(1000));
+        await expectLater(
+          controller.prepare(),
+          throwsA(isA<TimeoutException>()),
+        );
+        final original = backend.requestId;
+        await store.close();
+        store = await open();
+        controller = bind();
+        controller.selectFixture(scope);
+        clock.pair(9000, 9200);
+        await controller.prepare();
+        expect(backend.requestId, original);
+        expect(controller.selected!.anchor.request.elapsedMs, 1000);
+        expect(controller.selected!.anchor.response, isNull);
+        start();
+        final claim = await capture();
+        expect(claim.parameters['p_clock']['anchor_provenance'], 'replayed');
+        expect(
+          claim.parameters['p_clock']['anchor_response_elapsed_ms'],
+          isNull,
+        );
+      },
+    );
 
-    test('warnings require continuation and reset on stop/checkpoint change', () async {
-      await prepare();
-      start();
-      clock.samples.add(observation(3200));
-      final early = await controller.observeQr('SYNTHETIC-EARLY');
-      expect(early.warning, V2Warning.early);
-      await expectLater(controller.confirm(early), throwsStateError);
-      controller.continueAfterWarning(early);
-      clock.samples.add(observation(3400));
-      await controller.confirm(early);
-      clock.samples.add(observation(4200));
-      final suppressed = await controller.observeQr('SYNTHETIC-NEXT');
-      expect(suppressed.warning, isNull);
-      controller.cancelQr();
-      controller.selectCheckpoint(checkpointV2Out);
-      clock.samples.add(observation(5200));
-      expect((await controller.observeQr('SYNTHETIC-EXIT')).warning, V2Warning.early);
-      controller.stop();
-      start();
-      clock.samples.add(observation(6200));
-      expect((await controller.observeQr('SYNTHETIC-RESTART')).warning, V2Warning.early);
-      expect(backend.calls, [V2Rpc.prepare]);
-    });
+    test(
+      'warnings require continuation and reset on stop/checkpoint change',
+      () async {
+        await prepare();
+        start();
+        clock.samples.add(observation(3200));
+        final early = await controller.observeQr('SYNTHETIC-EARLY');
+        expect(early.warning, V2Warning.early);
+        await expectLater(controller.confirm(early), throwsStateError);
+        controller.continueAfterWarning(early);
+        clock.samples.add(observation(3400));
+        await controller.confirm(early);
+        clock.samples.add(observation(4200));
+        final suppressed = await controller.observeQr('SYNTHETIC-NEXT');
+        expect(suppressed.warning, isNull);
+        controller.cancelQr();
+        controller.selectCheckpoint(checkpointV2Out);
+        clock.samples.add(observation(5200));
+        expect(
+          (await controller.observeQr('SYNTHETIC-EXIT')).warning,
+          V2Warning.early,
+        );
+        controller.stop();
+        start();
+        clock.samples.add(observation(6200));
+        expect(
+          (await controller.observeQr('SYNTHETIC-RESTART')).warning,
+          V2Warning.early,
+        );
+        expect(backend.calls, [V2Rpc.prepare]);
+      },
+    );
 
-    test('lost acknowledgement retries exact payload after seal, not unsent claim', () async {
-      await prepare();
-      start();
-      final first = await capture();
-      final second = await capture(id: 'SYNTHETIC-SECOND', qr: 3604200);
-      controller.stop();
-      await expectLater(controller.sync(), throwsStateError);
-      expect(backend.sent, isEmpty);
-      backend.state = 'SYNCING';
-      backend.loseSubmit = true;
-      await expectLater(controller.sync(), throwsA(isA<TimeoutException>()));
-      expect(controller.counts!.attempted, 1);
-      expect(controller.counts!.queued, 1);
-      backend.sealed = true;
-      await expectLater(controller.sync(), throwsStateError);
-      expect(backend.sent, [first.parameters, first.parameters]);
-      expect(controller.counts!.submitted, 1);
-      expect(store.unresolvedV2Claims(preparationV2).single.payload, second.payload);
-      expect(() => controller.resume(), throwsStateError);
-      backend.sealed = false; // Contradictory server response must fail closed.
-      await expectLater(controller.sync(), throwsStateError);
-      expect(backend.sent, [first.parameters, first.parameters]);
-      backend.sealed = true;
-      await expectLater(controller.complete(1), throwsStateError);
-      expect(backend.completions, isEmpty);
-    });
+    test(
+      'lost acknowledgement retries exact payload after seal, not unsent claim',
+      () async {
+        await prepare();
+        start();
+        final first = await capture();
+        final second = await capture(id: 'SYNTHETIC-SECOND', qr: 3604200);
+        controller.stop();
+        await expectLater(controller.sync(), throwsStateError);
+        expect(backend.sent, isEmpty);
+        backend.state = 'SYNCING';
+        backend.loseSubmit = true;
+        await expectLater(controller.sync(), throwsA(isA<TimeoutException>()));
+        expect(controller.counts!.attempted, 1);
+        expect(controller.counts!.queued, 1);
+        backend.sealed = true;
+        await expectLater(controller.sync(), throwsStateError);
+        expect(backend.sent, [first.parameters, first.parameters]);
+        expect(controller.counts!.submitted, 1);
+        expect(
+          store.unresolvedV2Claims(preparationV2).single.payload,
+          second.payload,
+        );
+        expect(() => controller.resume(), throwsStateError);
+        backend.sealed =
+            false; // Contradictory server response must fail closed.
+        await expectLater(controller.sync(), throwsStateError);
+        expect(backend.sent, [first.parameters, first.parameters]);
+        backend.sealed = true;
+        await expectLater(controller.complete(1), throwsStateError);
+        expect(backend.completions, isEmpty);
+      },
+    );
 
-    test('definitive deadline denial is queued; extension allows exact retry', () async {
-      await prepare();
-      start();
-      final claim = await capture();
-      controller.stop();
-      backend.state = 'SYNCING';
-      backend.denySubmit = '55000';
-      await expectLater(controller.sync(), throwsA(isA<PostgrestException>()));
-      expect(controller.counts!.queued, 1);
-      expect(controller.counts!.attempted, 0);
-      backend.denySubmit = null;
-      backend.deadlineHours = 30;
-      await controller.sync();
-      expect(backend.sent, [claim.parameters, claim.parameters]);
-      expect(controller.counts!.submitted, 1);
-    });
+    test(
+      'definitive deadline denial is queued; extension allows exact retry',
+      () async {
+        await prepare();
+        start();
+        final claim = await capture();
+        controller.stop();
+        backend.state = 'SYNCING';
+        backend.denySubmit = '55000';
+        await expectLater(
+          controller.sync(),
+          throwsA(isA<PostgrestException>()),
+        );
+        expect(controller.counts!.queued, 1);
+        expect(controller.counts!.attempted, 0);
+        backend.denySubmit = null;
+        backend.deadlineHours = 30;
+        await controller.sync();
+        expect(backend.sent, [claim.parameters, claim.parameters]);
+        expect(controller.counts!.submitted, 1);
+      },
+    );
 
-    test('malformed ack retains attempt; loss and conflict never skip', () async {
-      await prepare();
-      start();
-      final first = await capture();
-      await capture(id: 'SYNTHETIC-NEXT', qr: 3604200);
-      controller.stop();
-      backend.state = 'SYNCING';
-      backend.malformedAck = true;
-      await expectLater(controller.sync(), throwsFormatException);
-      expect(controller.counts!.attempted, 1);
-      backend.malformedAck = false;
-      backend.denySubmit = '23505';
-      await expectLater(controller.sync(), throwsA(isA<PostgrestException>()));
-      expect(controller.counts!.blocked, 1);
-      expect(controller.counts!.queued, 1);
-      backend.denySubmit = null;
-      backend.sealed = true;
-      backend.disposition = 'undrained';
-      await expectLater(controller.sync(), throwsStateError);
-      expect(backend.sent, [first.parameters, first.parameters]);
-      expect(() => controller.resume(), throwsStateError);
-      await expectLater(controller.complete(0), throwsStateError);
-    });
+    test(
+      'malformed ack retains attempt; loss and conflict never skip',
+      () async {
+        await prepare();
+        start();
+        final first = await capture();
+        await capture(id: 'SYNTHETIC-NEXT', qr: 3604200);
+        controller.stop();
+        backend.state = 'SYNCING';
+        backend.malformedAck = true;
+        await expectLater(controller.sync(), throwsFormatException);
+        expect(controller.counts!.attempted, 1);
+        backend.malformedAck = false;
+        backend.denySubmit = '23505';
+        await expectLater(
+          controller.sync(),
+          throwsA(isA<PostgrestException>()),
+        );
+        expect(controller.counts!.blocked, 1);
+        expect(controller.counts!.queued, 1);
+        backend.denySubmit = null;
+        backend.sealed = true;
+        backend.disposition = 'undrained';
+        await expectLater(controller.sync(), throwsStateError);
+        expect(backend.sent, [first.parameters, first.parameters]);
+        expect(() => controller.resume(), throwsStateError);
+        await expectLater(controller.complete(0), throwsStateError);
+      },
+    );
 
-    test('revocation retains the original evidence and stops capture', () async {
-      await prepare();
-      start();
-      final claim = await capture();
-      controller.stop();
-      backend.state = 'SYNCING';
-      backend.denyStatus = true;
-      await expectLater(controller.sync(), throwsA(isA<PostgrestException>()));
-      expect(backend.sent, isEmpty);
-      expect(store.unresolvedV2Claims(preparationV2).single.payload, claim.payload);
-      expect(() => controller.resume(), throwsStateError);
-    });
+    test(
+      'revocation retains the original evidence and stops capture',
+      () async {
+        await prepare();
+        start();
+        final claim = await capture();
+        controller.stop();
+        backend.state = 'SYNCING';
+        backend.denyStatus = true;
+        await expectLater(
+          controller.sync(),
+          throwsA(isA<PostgrestException>()),
+        );
+        expect(backend.sent, isEmpty);
+        expect(
+          store.unresolvedV2Claims(preparationV2).single.payload,
+          claim.payload,
+        );
+        expect(() => controller.resume(), throwsStateError);
+      },
+    );
 
-    test('completion lost response survives restart and exact terminal retry', () async {
-      await prepare();
-      start();
-      await capture();
-      controller.stop();
-      backend.state = 'SYNCING';
-      await controller.sync();
-      await expectLater(controller.complete(0), throwsStateError);
-      backend.loseComplete = true;
-      await expectLater(controller.complete(1), throwsA(isA<TimeoutException>()));
-      expect(controller.selected!.intent, 1);
-      expect(() => controller.resume(), throwsStateError);
-      await store.close();
-      store = await open();
-      controller = bind();
-      controller.selectFixture(scope);
-      backend.state = 'FINALIZED';
-      backend.sealed = true;
-      await controller.complete(1);
-      expect(backend.completions, [1, 1]);
-      expect(controller.selected!.completionReceipt!['replayed'], isTrue);
-      expect(controller.selected!.disposition, 'completed');
-      expect(() => controller.resume(), throwsStateError);
-    });
+    test(
+      'completion lost response survives restart and exact terminal retry',
+      () async {
+        await prepare();
+        start();
+        await capture();
+        controller.stop();
+        backend.state = 'SYNCING';
+        await controller.sync();
+        await expectLater(controller.complete(0), throwsStateError);
+        backend.loseComplete = true;
+        await expectLater(
+          controller.complete(1),
+          throwsA(isA<TimeoutException>()),
+        );
+        expect(controller.selected!.intent, 1);
+        expect(() => controller.resume(), throwsStateError);
+        await store.close();
+        store = await open();
+        controller = bind();
+        controller.selectFixture(scope);
+        backend.state = 'FINALIZED';
+        backend.sealed = true;
+        await controller.complete(1);
+        expect(backend.completions, [1, 1]);
+        expect(controller.selected!.completionReceipt!['replayed'], isTrue);
+        expect(controller.selected!.disposition, 'completed');
+        expect(() => controller.resume(), throwsStateError);
+      },
+    );
 
     test('zero is an explicit completion, not inferred from silence', () async {
       backend.state = 'OPEN';
@@ -564,156 +722,247 @@ void main() {
       expect(controller.selected!.disposition, 'completed');
     });
 
-    test('A-B-A switch during upload cannot write a late acknowledgement', () async {
-      await prepare();
-      start();
-      final claim = await capture();
-      controller.stop();
-      backend.state = 'SYNCING';
-      backend.submitStarted = Completer<void>();
-      backend.releaseSubmit = Completer<void>();
-      final syncing = controller.sync();
-      final failed = expectLater(syncing, throwsStateError);
-      await backend.submitStarted!.future;
-      owner = staffB;
-      epoch++;
-      owner = staffA;
-      epoch++;
-      backend.releaseSubmit!.complete();
-      await failed;
-      expect(store.unresolvedV2Claims(preparationV2).single.state, V2ClaimState.attempted);
-      expect(store.unresolvedV2Claims(preparationV2).single.payload, claim.payload);
-      await controller.invalidate();
-      store = await open(staff: staffB);
-      expect(store.findV2Preparation(scope), isNull);
-      expect(() => store.readV2Preparation(preparationV2), throwsStateError);
-      await store.close();
-      store = await open();
-      expect(store.unresolvedV2Claims(preparationV2).single.payload, claim.payload);
-    });
+    test(
+      'A-B-A switch during upload cannot write a late acknowledgement',
+      () async {
+        await prepare();
+        start();
+        final claim = await capture();
+        controller.stop();
+        backend.state = 'SYNCING';
+        backend.submitStarted = Completer<void>();
+        backend.releaseSubmit = Completer<void>();
+        final syncing = controller.sync();
+        final failed = expectLater(syncing, throwsStateError);
+        await backend.submitStarted!.future;
+        owner = staffB;
+        epoch++;
+        owner = staffA;
+        epoch++;
+        backend.releaseSubmit!.complete();
+        await failed;
+        expect(
+          store.unresolvedV2Claims(preparationV2).single.state,
+          V2ClaimState.attempted,
+        );
+        expect(
+          store.unresolvedV2Claims(preparationV2).single.payload,
+          claim.payload,
+        );
+        await controller.invalidate();
+        store = await open(staff: staffB);
+        expect(store.findV2Preparation(scope), isNull);
+        expect(() => store.readV2Preparation(preparationV2), throwsStateError);
+        await store.close();
+        store = await open();
+        expect(
+          store.unresolvedV2Claims(preparationV2).single.payload,
+          claim.payload,
+        );
+      },
+    );
 
-    test('key loss leaves encrypted bytes unchanged; no plaintext evidence', () async {
-      await prepare();
-      start();
-      final claim = await capture(id: 'SYNTHETIC-CIPHERTEXT');
-      await store.close();
-      final bytes = await File(databasePath).readAsBytes();
-      expect(latin1.decode(bytes), isNot(contains('SYNTHETIC-CIPHERTEXT')));
-      expect(latin1.decode(bytes), isNot(contains(claim.id)));
-      await expectLater(open(keyStore: MemorySecureValues()), throwsStateError);
-      expect(await File(databasePath).readAsBytes(), bytes);
-      store = await open();
-      expect(store.unresolvedV2Claims(preparationV2).single.payload, claim.payload);
-    });
+    test(
+      'key loss leaves encrypted bytes unchanged; no plaintext evidence',
+      () async {
+        await prepare();
+        start();
+        final claim = await capture(id: 'SYNTHETIC-CIPHERTEXT');
+        await store.close();
+        final bytes = await File(databasePath).readAsBytes();
+        expect(latin1.decode(bytes), isNot(contains('SYNTHETIC-CIPHERTEXT')));
+        expect(latin1.decode(bytes), isNot(contains(claim.id)));
+        await expectLater(
+          open(keyStore: MemorySecureValues()),
+          throwsStateError,
+        );
+        expect(await File(databasePath).readAsBytes(), bytes);
+        store = await open();
+        expect(
+          store.unresolvedV2Claims(preparationV2).single.payload,
+          claim.payload,
+        );
+      },
+    );
 
-    test('populated v3 upgrade leaves every legacy row and count intact', () async {
-      final fixture = OfflineFixture(DateTime.utc(2026, 11, 24, 1));
-      final request = store.offlineRequest(eventId, assignmentA);
-      final prep = fixture.parse(request.id);
-      store.saveOfflinePreparation(prep);
-      final guard = fixture.guard(prep);
-      final queued = store.createOfflineClaim(guard: guard, checkpointId: checkpointId, studentId: 'SYNTHETIC-V1-QUEUED');
-      final blocked = store.createOfflineClaim(guard: guard, checkpointId: checkpointId, studentId: 'SYNTHETIC-V1-BLOCKED');
-      store.blockOffline(blocked);
-      final fixture2 = OfflineFixture(fixture.issued, assignment: assignmentB, preparation: preparationB);
-      final request2 = store.offlineRequest(eventId, assignmentB);
-      final prep2 = fixture2.parse(request2.id);
-      store.saveOfflinePreparation(prep2);
-      final submitted = store.createOfflineClaim(guard: fixture2.guard(prep2), checkpointId: checkpointId, studentId: 'SYNTHETIC-V1-SUBMITTED');
-      store.acknowledgeOffline(submitted, OfflineAcknowledgement(fixture.issued, false));
-      store.persistCompletionIntent(preparationB, 1);
-      final pending = await store.createPending(eventId: eventId, checkpointId: checkpointId, studentId: 'SYNTHETIC-ONLINE-PENDING');
-      await store.close();
-      final key = keys.values[SecureAttendanceStore.encryptionKeyName]!;
-      Database raw() {
-        final db = sqlite3.open(databasePath);
-        db.execute("PRAGMA key = \"x'$key'\";");
-        return db;
-      }
-      final old = raw();
-      for (final table in ['offline_v2_claims', 'offline_v2_preparations', 'offline_v2_requests']) {
-        old.execute('DROP TABLE $table;');
-      }
-      old.execute('PRAGMA user_version = 3;');
-      const tables = ['attendance_scans', 'offline_requests', 'offline_preparations', 'offline_claims', 'offline_accounting'];
-      Map<String, Object> snapshot(Database db) => {
-        for (final table in tables) table: db.select('SELECT * FROM $table ORDER BY rowid;').map((row) => row.values.toList()).toList(),
-      };
-      final before = snapshot(old);
-      old.close();
-      store = await open();
-      expect(store.readQueuedOffline(preparationA).single.parameters, queued.parameters);
-      expect(store.preparationSummary(preparationA).counts.blocked, 1);
-      expect(store.preparationSummary(preparationB).intent, 1);
-      expect((await store.readPending()).single.scanId, pending.scanId);
-      expect(() => store.reserveV2Request(scope, observation(1000)), throwsStateError);
-      await store.close();
-      final after = raw();
-      expect(after.select('PRAGMA user_version;').single.values.single, 4);
-      expect(snapshot(after), before);
-      after.close();
-      // Another account's v2 claim can coexist, but the guard counts both.
-      store = await open(staff: staffB);
-      final v2req = store.reserveV2Request(scope, observation(1000));
-      final v2prep = V2Preparation.parse({...prepResponse(v2req.id), 'staff_user_id': staffB}, scope, staffB, v2req.id);
-      store.saveV2Preparation(v2req, v2prep, V2Anchor(observation(1000), observation(1200), 'original'));
-      final v2claim = store.createV2Claim(preparationId: preparationV2, checkpointId: checkpointV2, studentId: 'SYNTHETIC-V2-QUEUED', qr: observation(3603200), confirmation: observation(3603400));
-      expect(store.installationUnresolvedCount(), 3);
-      expect(store.preparations(), isEmpty);
-      await store.close();
-      store = await open();
-      expect(store.findV2Preparation(scope), isNull);
-      expect(store.installationUnresolvedCount(), 3);
-      expect(store.readQueuedOffline(preparationA).single.id, queued.id);
-      await store.close();
-      store = await open(staff: staffB);
-      expect(store.unresolvedV2Claims(preparationV2).single.payload, v2claim.payload);
-    });
+    test(
+      'populated v3 upgrade leaves every legacy row and count intact',
+      () async {
+        final fixture = OfflineFixture(DateTime.utc(2026, 11, 24, 1));
+        final request = store.offlineRequest(eventId, assignmentA);
+        final prep = fixture.parse(request.id);
+        store.saveOfflinePreparation(prep);
+        final guard = fixture.guard(prep);
+        final queued = store.createOfflineClaim(
+          guard: guard,
+          checkpointId: checkpointId,
+          studentId: 'SYNTHETIC-V1-QUEUED',
+        );
+        final blocked = store.createOfflineClaim(
+          guard: guard,
+          checkpointId: checkpointId,
+          studentId: 'SYNTHETIC-V1-BLOCKED',
+        );
+        store.blockOffline(blocked);
+        final fixture2 = OfflineFixture(
+          fixture.issued,
+          assignment: assignmentB,
+          preparation: preparationB,
+        );
+        final request2 = store.offlineRequest(eventId, assignmentB);
+        final prep2 = fixture2.parse(request2.id);
+        store.saveOfflinePreparation(prep2);
+        final submitted = store.createOfflineClaim(
+          guard: fixture2.guard(prep2),
+          checkpointId: checkpointId,
+          studentId: 'SYNTHETIC-V1-SUBMITTED',
+        );
+        store.acknowledgeOffline(
+          submitted,
+          OfflineAcknowledgement(fixture.issued, false),
+        );
+        store.persistCompletionIntent(preparationB, 1);
+        final pending = await store.createPending(
+          eventId: eventId,
+          checkpointId: checkpointId,
+          studentId: 'SYNTHETIC-ONLINE-PENDING',
+        );
+        await store.close();
+        final key = keys.values[SecureAttendanceStore.encryptionKeyName]!;
+        Database raw() {
+          final db = sqlite3.open(databasePath);
+          db.execute("PRAGMA key = \"x'$key'\";");
+          return db;
+        }
 
-    testWidgets('fixture UI warns, confirms, masks and never uploads from capture', (tester) async {
-      tester.view.physicalSize = const Size(1000, 1600);
-      tester.view.devicePixelRatio = 1;
-      addTearDown(tester.view.resetPhysicalSize);
-      addTearDown(tester.view.resetDevicePixelRatio);
-      clock.pair(1000, 1200);
-      await tester.pumpWidget(MaterialApp(
-        home: OfflineV2FixtureWorkspace(
-          controller: controller,
-          fixtures: [scope],
-          accountChanges: const Stream<void>.empty(),
-          scannerBuilder: (_, onValue, _) => TextButton(
-            onPressed: () => onValue('00000123456'),
-            child: const Text('Emit synthetic QR'),
+        final old = raw();
+        for (final table in [
+          'offline_v2_claims',
+          'offline_v2_preparations',
+          'offline_v2_requests',
+        ]) {
+          old.execute('DROP TABLE $table;');
+        }
+        old.execute('PRAGMA user_version = 3;');
+        const tables = [
+          'attendance_scans',
+          'offline_requests',
+          'offline_preparations',
+          'offline_claims',
+          'offline_accounting',
+        ];
+        Map<String, Object> snapshot(Database db) => {
+          for (final table in tables)
+            table: db
+                .select('SELECT * FROM $table ORDER BY rowid;')
+                .map((row) => row.values.toList())
+                .toList(),
+        };
+        final before = snapshot(old);
+        old.close();
+        store = await open();
+        expect(
+          store.readQueuedOffline(preparationA).single.parameters,
+          queued.parameters,
+        );
+        expect(store.preparationSummary(preparationA).counts.blocked, 1);
+        expect(store.preparationSummary(preparationB).intent, 1);
+        expect((await store.readPending()).single.scanId, pending.scanId);
+        expect(
+          () => store.reserveV2Request(scope, observation(1000)),
+          throwsStateError,
+        );
+        await store.close();
+        final after = raw();
+        expect(after.select('PRAGMA user_version;').single.values.single, 4);
+        expect(snapshot(after), before);
+        after.close();
+        // Another account's v2 claim can coexist, but the guard counts both.
+        store = await open(staff: staffB);
+        final v2req = store.reserveV2Request(scope, observation(1000));
+        final v2prep = V2Preparation.parse(
+          {...prepResponse(v2req.id), 'staff_user_id': staffB},
+          scope,
+          staffB,
+          v2req.id,
+        );
+        store.saveV2Preparation(
+          v2req,
+          v2prep,
+          V2Anchor(observation(1000), observation(1200), 'original'),
+        );
+        final v2claim = store.createV2Claim(
+          preparationId: preparationV2,
+          checkpointId: checkpointV2,
+          studentId: 'SYNTHETIC-V2-QUEUED',
+          qr: observation(3603200),
+          confirmation: observation(3603400),
+        );
+        expect(store.installationUnresolvedCount(), 3);
+        expect(store.preparations(), isEmpty);
+        await store.close();
+        store = await open();
+        expect(store.findV2Preparation(scope), isNull);
+        expect(store.installationUnresolvedCount(), 3);
+        expect(store.readQueuedOffline(preparationA).single.id, queued.id);
+        await store.close();
+        store = await open(staff: staffB);
+        expect(
+          store.unresolvedV2Claims(preparationV2).single.payload,
+          v2claim.payload,
+        );
+      },
+    );
+
+    testWidgets(
+      'fixture UI warns, confirms, masks and never uploads from capture',
+      (tester) async {
+        tester.view.physicalSize = const Size(1000, 1600);
+        tester.view.devicePixelRatio = 1;
+        addTearDown(tester.view.resetPhysicalSize);
+        addTearDown(tester.view.resetDevicePixelRatio);
+        clock.pair(1000, 1200);
+        await tester.pumpWidget(
+          MaterialApp(
+            home: OfflineV2FixtureWorkspace(
+              controller: controller,
+              fixtures: [scope],
+              accountChanges: const Stream<void>.empty(),
+              scannerBuilder: (_, onValue, _) => TextButton(
+                onPressed: () => onValue('00000123456'),
+                child: const Text('Emit synthetic QR'),
+              ),
+            ),
           ),
-        ),
-      ));
-      await tester.tap(find.text('Select synthetic preparation'));
-      await tester.pumpAndSettle();
-      await tester.tap(find.text('Fixture 1').last);
-      await tester.pumpAndSettle();
-      await tester.tap(find.text('Prepare online'));
-      await tester.pumpAndSettle();
-      await tester.tap(find.text('Resume local collection'));
-      await tester.pumpAndSettle();
-      await tester.tap(find.text('Select checkpoint'));
-      await tester.pumpAndSettle();
-      await tester.tap(find.text('Entrance (IN)').last);
-      await tester.pumpAndSettle();
-      clock.pair(3200, 3400);
-      await tester.tap(find.text('Scan QR'));
-      await tester.pumpAndSettle();
-      await tester.tap(find.text('Emit synthetic QR'));
-      await tester.pumpAndSettle();
-      expect(find.text('Schedule warning'), findsOneWidget);
-      await tester.tap(find.text('Continue'));
-      await tester.pumpAndSettle();
-      expect(find.text('Confirm local capture'), findsOneWidget);
-      expect(find.textContaining('••••3456'), findsOneWidget);
-      expect(find.textContaining('00000123456'), findsNothing);
-      await tester.tap(find.text('Save locally'));
-      await tester.pumpAndSettle();
-      expect(find.textContaining('Queued: 1'), findsOneWidget);
-      expect(backend.calls, [V2Rpc.prepare]);
-    });
+        );
+        await tester.tap(find.text('Select synthetic preparation'));
+        await tester.pumpAndSettle();
+        await tester.tap(find.text('Fixture 1').last);
+        await tester.pumpAndSettle();
+        await tester.tap(find.text('Prepare online'));
+        await tester.pumpAndSettle();
+        await tester.tap(find.text('Resume local collection'));
+        await tester.pumpAndSettle();
+        await tester.tap(find.text('Select checkpoint'));
+        await tester.pumpAndSettle();
+        await tester.tap(find.text('Entrance (IN)').last);
+        await tester.pumpAndSettle();
+        clock.pair(3200, 3400);
+        await tester.tap(find.text('Scan QR'));
+        await tester.pumpAndSettle();
+        await tester.tap(find.text('Emit synthetic QR'));
+        await tester.pumpAndSettle();
+        expect(find.text('Schedule warning'), findsOneWidget);
+        await tester.tap(find.text('Continue'));
+        await tester.pumpAndSettle();
+        expect(find.text('Confirm local capture'), findsOneWidget);
+        expect(find.textContaining('••••3456'), findsOneWidget);
+        expect(find.textContaining('00000123456'), findsNothing);
+        await tester.tap(find.text('Save locally'));
+        await tester.pumpAndSettle();
+        expect(find.textContaining('Queued: 1'), findsOneWidget);
+        expect(backend.calls, [V2Rpc.prepare]);
+      },
+    );
   });
 }

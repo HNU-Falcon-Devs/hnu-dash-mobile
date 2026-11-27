@@ -435,59 +435,61 @@ class SecureAttendanceStore {
       throw ArgumentError('The event, checkpoint, or Student ID is invalid.');
     }
 
-    if (hasUnsettledV2()) {
-      throw StateError('Resolve successor preparation evidence first.');
-    }
+    return this._v2Transaction(() {
+      if (this.hasUnsettledV2()) {
+        throw StateError('Resolve successor preparation evidence first.');
+      }
 
-    // A terminal conflict must not be bypassed by creating a new UUID for
-    // the same event/checkpoint/Student ID. It remains support-only evidence.
-    final conflict = _database.select(
-      '''
-      SELECT scan_id FROM $tableName
-      WHERE staff_user_id = ? AND event_id = ? AND checkpoint_id = ?
-        AND student_id = ? AND submission_status = 'blocked' AND legacy = 0
-      LIMIT 1;
-    ''',
-      [staffUserId, eventId, checkpointId, studentId],
-    );
-    final offlineConflict = _database.select(
-      '''
-      SELECT capture_id FROM offline_claims
-      WHERE staff_user_id = ? AND event_id = ? AND checkpoint_id = ?
-        AND student_id = ? AND status != 'submitted' LIMIT 1;
+      // A terminal conflict must not be bypassed by creating a new UUID for
+      // the same event/checkpoint/Student ID. It remains support-only evidence.
+      final conflict = _database.select(
+        '''
+        SELECT scan_id FROM $tableName
+        WHERE staff_user_id = ? AND event_id = ? AND checkpoint_id = ?
+          AND student_id = ? AND submission_status = 'blocked' AND legacy = 0
+        LIMIT 1;
       ''',
-      [staffUserId, eventId, checkpointId, studentId],
-    );
-    if (conflict.isNotEmpty || offlineConflict.isNotEmpty) {
-      throw StateError(
-        'This scan payload has unresolved evidence. Contact support.',
+        [staffUserId, eventId, checkpointId, studentId],
       );
-    }
+      final offlineConflict = _database.select(
+        '''
+        SELECT capture_id FROM offline_claims
+        WHERE staff_user_id = ? AND event_id = ? AND checkpoint_id = ?
+          AND student_id = ? AND status != 'submitted' LIMIT 1;
+        ''',
+        [staffUserId, eventId, checkpointId, studentId],
+      );
+      if (conflict.isNotEmpty || offlineConflict.isNotEmpty) {
+        throw StateError(
+          'This scan payload has unresolved evidence. Contact support.',
+        );
+      }
 
-    final record = ScanRecord(
-      scanId: const Uuid().v4(),
-      eventId: eventId,
-      checkpointId: checkpointId,
-      studentId: studentId,
-      staffUserId: staffUserId,
-      status: ScanStatus.pending,
-    );
-    _database.execute(
-      '''
-      INSERT INTO $tableName (
-        scan_id, event_id, checkpoint_id, student_id, staff_user_id,
-        submission_status, received_at, replayed, legacy, legacy_status
-      ) VALUES (?, ?, ?, ?, ?, 'pending', NULL, NULL, 0, NULL);
-    ''',
-      [
-        record.scanId,
-        record.eventId,
-        record.checkpointId,
-        record.studentId,
-        staffUserId,
-      ],
-    );
-    return record;
+      final record = ScanRecord(
+        scanId: const Uuid().v4(),
+        eventId: eventId,
+        checkpointId: checkpointId,
+        studentId: studentId,
+        staffUserId: staffUserId,
+        status: ScanStatus.pending,
+      );
+      _database.execute(
+        '''
+        INSERT INTO $tableName (
+          scan_id, event_id, checkpoint_id, student_id, staff_user_id,
+          submission_status, received_at, replayed, legacy, legacy_status
+        ) VALUES (?, ?, ?, ?, ?, 'pending', NULL, NULL, 0, NULL);
+      ''',
+        [
+          record.scanId,
+          record.eventId,
+          record.checkpointId,
+          record.studentId,
+          staffUserId,
+        ],
+      );
+      return record;
+    });
   }
 
   Future<List<ScanRecord>> readRecent({int limit = 10}) async {
@@ -611,7 +613,7 @@ class SecureAttendanceStore {
     offlineUuid(staffUserId);
     offlineUuid(eventId);
     offlineUuid(assignmentId);
-    if (hasUnsettledV2()) {
+    if (this.hasUnsettledV2()) {
       throw StateError('Resolve successor preparation evidence first.');
     }
     _database.execute('BEGIN IMMEDIATE;');
@@ -747,10 +749,10 @@ class SecureAttendanceStore {
           'Resolve or escalate the original evidence first.',
         );
       }
-      if (hasUnsettledV2()) {
+      if (this.hasUnsettledV2()) {
         throw StateError('Resolve successor preparation evidence first.');
       }
-      final count = installationUnresolvedCount();
+      final count = this.installationUnresolvedCount();
       if (count >= offlineQueueCapacity) {
         throw const OfflineCaptureException(
           'The unresolved offline queue is full. Sync or contact support before capturing again.',

@@ -127,8 +127,9 @@ extension OfflineV2Store on SecureAttendanceStore {
 
   bool hasUnsettledV2() {
     _ensureOpen();
-    return _database.select(
-      '''
+    return _database
+        .select(
+          '''
       SELECT 1 FROM offline_v2_preparations
       WHERE staff_user_id = ? AND disposition IS NULL
       UNION ALL
@@ -141,14 +142,16 @@ extension OfflineV2Store on SecureAttendanceStore {
       )
       LIMIT 1;
       ''',
-      [staffUserId, staffUserId, staffUserId],
-    ).isNotEmpty;
+          [staffUserId, staffUserId, staffUserId],
+        )
+        .isNotEmpty;
   }
 
   bool _hasUnsettledLegacy() {
     _ensureOpen();
-    return _database.select(
-      '''
+    return _database
+        .select(
+          '''
       SELECT 1 FROM attendance_scans
       WHERE staff_user_id = ? AND legacy = 0 AND submission_status = 'pending'
       UNION ALL
@@ -163,8 +166,9 @@ extension OfflineV2Store on SecureAttendanceStore {
       WHERE staff_user_id = ? AND resolved = 0
       LIMIT 1;
       ''',
-      [staffUserId, staffUserId, staffUserId, staffUserId],
-    ).isNotEmpty;
+          [staffUserId, staffUserId, staffUserId, staffUserId],
+        )
+        .isNotEmpty;
   }
 
   int installationUnresolvedCount() {
@@ -173,7 +177,8 @@ extension OfflineV2Store on SecureAttendanceStore {
       SELECT
         (SELECT count(*) FROM offline_claims WHERE status != 'submitted') +
         (SELECT count(*) FROM offline_v2_claims WHERE status != 'submitted') AS total;
-      ''').single['total'] as int;
+      ''').single['total']
+        as int;
   }
 
   V2Request reserveV2Request(V2Scope scope, V2Observation observation) {
@@ -251,7 +256,12 @@ extension OfflineV2Store on SecureAttendanceStore {
         WHERE request_id = ? AND staff_user_id = ? AND event_id = ?
           AND assignment_id = ?;
         ''',
-        [request.id, staffUserId, request.scope.eventId, request.scope.assignmentId],
+        [
+          request.id,
+          staffUserId,
+          request.scope.eventId,
+          request.scope.assignmentId,
+        ],
       );
       if (rows.length != 1 ||
           rows.single['scope'] != jsonEncode(request.scope.toJson()) ||
@@ -361,7 +371,11 @@ extension OfflineV2Store on SecureAttendanceStore {
         throw StateError('Resolve or escalate the original evidence first.');
       }
       final id = const Uuid().v4();
-      final clock = saved.anchor.evidence(saved.preparation.issued, qr, confirmation);
+      final clock = saved.anchor.evidence(
+        saved.preparation.issued,
+        qr,
+        confirmation,
+      );
       validateV2Clock(clock);
       final payload = jsonEncode({
         'p_preparation_id': preparationId,
@@ -377,8 +391,15 @@ extension OfflineV2Store on SecureAttendanceStore {
            student_id,payload,status)
         VALUES (?,?,?,?,?,?,?,'queued');
         ''',
-        [id, preparationId, staffUserId, saved.preparation.eventId,
-          checkpointId, studentId, payload],
+        [
+          id,
+          preparationId,
+          staffUserId,
+          saved.preparation.eventId,
+          checkpointId,
+          studentId,
+          payload,
+        ],
       );
       return V2Claim(id, preparationId, payload, V2ClaimState.queued);
     });
@@ -392,7 +413,11 @@ extension OfflineV2Store on SecureAttendanceStore {
       V2ClaimState.values.byName(row['status'] as String),
     );
     final payload = v2Object(claim.parameters, {
-      'p_preparation_id', 'p_capture_id', 'p_checkpoint_id', 'p_student_id', 'p_clock',
+      'p_preparation_id',
+      'p_capture_id',
+      'p_checkpoint_id',
+      'p_student_id',
+      'p_clock',
     });
     if (payload['p_capture_id'] != claim.id ||
         payload['p_preparation_id'] != claim.preparationId ||
@@ -407,14 +432,17 @@ extension OfflineV2Store on SecureAttendanceStore {
 
   List<V2Claim> unresolvedV2Claims(String preparationId) {
     readV2Preparation(preparationId);
-    return _database.select(
-      '''
+    return _database
+        .select(
+          '''
       SELECT * FROM offline_v2_claims
       WHERE preparation_id = ? AND staff_user_id = ? AND status != 'submitted'
       ORDER BY rowid;
       ''',
-      [preparationId, staffUserId],
-    ).map(_readV2Claim).toList();
+          [preparationId, staffUserId],
+        )
+        .map(_readV2Claim)
+        .toList();
   }
 
   V2Counts v2Counts(String preparationId) {
@@ -480,9 +508,8 @@ extension OfflineV2Store on SecureAttendanceStore {
 
   void acknowledgeV2(V2Claim claim, Object? raw) {
     final ack = v2Acknowledgement(raw, claim.preparationId, claim.id);
-    if (offlineInstant(ack['received_at']).isBefore(
-      readV2Preparation(claim.preparationId).preparation.issued,
-    )) {
+    if (offlineInstant(ack['received_at'])
+        .isBefore(readV2Preparation(claim.preparationId).preparation.issued)) {
       throw const FormatException('Acknowledgement predates preparation.');
     }
     _v2Transaction(() {
@@ -552,12 +579,16 @@ extension OfflineV2Store on SecureAttendanceStore {
       const states = ['DRAFT', 'OPEN', 'SYNCING', 'FINALIZED'];
       if (status.count < counts.submitted ||
           (previousCount != null && status.count < previousCount) ||
-          (previousState != null && states.indexOf(status.state) < states.indexOf(previousState)) ||
+          (previousState != null &&
+              states.indexOf(status.state) < states.indexOf(previousState)) ||
           (previous['server_sealed'] == 1 && !status.sealed) ||
-          (previousDeadline != null && (status.deadline == null ||
-              offlineInstant(status.deadline).isBefore(offlineInstant(previousDeadline)) ||
-              (previous['server_sealed'] == 1 &&
-                  offlineInstant(status.deadline) != offlineInstant(previousDeadline)))) ||
+          (previousDeadline != null &&
+              (status.deadline == null ||
+                  offlineInstant(status.deadline)
+                      .isBefore(offlineInstant(previousDeadline)) ||
+                  (previous['server_sealed'] == 1 &&
+                      offlineInstant(status.deadline) !=
+                          offlineInstant(previousDeadline)))) ||
           (saved.disposition != null &&
               (saved.disposition != status.disposition ||
                   previousCount != status.count))) {
@@ -571,7 +602,16 @@ extension OfflineV2Store on SecureAttendanceStore {
           server_sealed = ?, server_deadline = ?
         WHERE preparation_id = ? AND staff_user_id = ?;
         ''',
-        [status.permitsCapture ? 0 : 1, status.disposition, status.count, status.state, status.sealed ? 1 : 0, status.deadline, id, staffUserId],
+        [
+          status.permitsCapture ? 0 : 1,
+          status.disposition,
+          status.count,
+          status.state,
+          status.sealed ? 1 : 0,
+          status.deadline,
+          id,
+          staffUserId,
+        ],
       );
     });
   }
@@ -607,7 +647,8 @@ extension OfflineV2Store on SecureAttendanceStore {
         throw StateError('Original completion intent unavailable.');
       }
       final receipt = v2Completion(raw, id, staffUserId, count);
-      if (offlineInstant(receipt['accounted_at']).isBefore(saved.preparation.issued)) {
+      if (offlineInstant(receipt['accounted_at'])
+          .isBefore(saved.preparation.issued)) {
         throw const FormatException('Completion predates preparation.');
       }
       if (saved.completionReceipt != null) {

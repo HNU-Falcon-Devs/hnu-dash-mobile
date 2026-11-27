@@ -42,7 +42,7 @@ String v2Text(Object? raw) {
 }
 
 int? _elapsed(Object? value) =>
-    value is int && value.abs() <= _maxSafeInteger ? value : null;
+    value is int && value >= -_maxSafeInteger && value <= _maxSafeInteger ? value : null;
 
 String? _boot(Object? value) =>
     value is String && _bootPattern.hasMatch(value) ? value : null;
@@ -68,7 +68,8 @@ class V2Observation {
 
   factory V2Observation.fromJson(Object? raw) {
     final value = v2Object(raw, {'elapsed_ms', 'boot', 'wall_at'});
-    if ((value['elapsed_ms'] != null && _elapsed(value['elapsed_ms']) == null) ||
+    if ((value['elapsed_ms'] != null &&
+            _elapsed(value['elapsed_ms']) == null) ||
         (value['boot'] != null && _boot(value['boot']) == null)) {
       throw const FormatException('Invalid stored clock observation.');
     }
@@ -94,9 +95,8 @@ typedef V2Clock = Future<V2Observation> Function();
 Future<V2Observation> observeAndroidClock() async {
   final fallback = DateTime.now().toUtc().toIso8601String();
   try {
-    final raw = await const MethodChannel(
-      'dev.hnudash.mobile/clock_evidence',
-    ).invokeMapMethod<String, dynamic>('observe');
+    final raw = await const MethodChannel('dev.hnudash.mobile/clock_evidence')
+        .invokeMapMethod<String, dynamic>('observe');
     final wall = raw?['wall_ms'];
     if (wall is! int) return V2Observation(wallAt: fallback);
     return V2Observation(
@@ -213,13 +213,11 @@ class V2Preparation {
         value['checkpoints'] is! List) {
       throw const FormatException('Successor preparation scope mismatch.');
     }
-    final checkpoints = (value['checkpoints'] as List)
-        .map((raw) {
-          return OfflineCheckpoint.parse(
-            v2Object(raw, {'id', 'label', 'direction', 'opens_at', 'closes_at'}),
-          );
-        })
-        .toList();
+    final checkpoints = (value['checkpoints'] as List).map((raw) {
+      return OfflineCheckpoint.parse(
+        v2Object(raw, {'id', 'label', 'direction', 'opens_at', 'closes_at'}),
+      );
+    }).toList();
     final expected = {for (final c in scope.checkpoints) c.id: c};
     if (checkpoints.length != expected.length ||
         checkpoints.map((c) => c.id).toSet().length != expected.length ||
@@ -390,7 +388,13 @@ class V2Warnings {
 const v2Dispositions = {'completed', 'missing', 'lost', 'revoked', 'undrained'};
 
 class V2Status {
-  const V2Status(this.state, this.sealed, this.count, this.disposition, this.deadline);
+  const V2Status(
+    this.state,
+    this.sealed,
+    this.count,
+    this.disposition,
+    this.deadline,
+  );
 
   final String state;
   final bool sealed;
@@ -437,7 +441,13 @@ class V2Status {
         throw const FormatException('Inconsistent terminal successor status.');
       }
     }
-    return V2Status(state as String, sealed, count, disposition as String?, value['sync_deadline'] as String?);
+    return V2Status(
+      state as String,
+      sealed,
+      count,
+      disposition as String?,
+      value['sync_deadline'] as String?,
+    );
   }
 }
 
@@ -527,11 +537,20 @@ void validateV2Clock(Object? raw) {
       throw const FormatException('Invalid boot evidence.');
     }
   }
-  if (!['original', 'replayed', 'missing', 'unknown'].contains(
-        clock['anchor_provenance'],
-      ) ||
-      !['none', 'missing', 'reboot', 'clock_jump', 'inconsistent', 'other']
-          .contains(clock['anomaly'])) {
+  if (![
+        'original',
+        'replayed',
+        'missing',
+        'unknown',
+      ].contains(clock['anchor_provenance']) ||
+      ![
+        'none',
+        'missing',
+        'reboot',
+        'clock_jump',
+        'inconsistent',
+        'other',
+      ].contains(clock['anomaly'])) {
     throw const FormatException('Invalid clock classification.');
   }
 }
