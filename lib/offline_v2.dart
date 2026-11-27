@@ -390,12 +390,13 @@ class V2Warnings {
 const v2Dispositions = {'completed', 'missing', 'lost', 'revoked', 'undrained'};
 
 class V2Status {
-  const V2Status(this.state, this.sealed, this.count, this.disposition);
+  const V2Status(this.state, this.sealed, this.count, this.disposition, this.deadline);
 
   final String state;
   final bool sealed;
   final int count;
   final String? disposition;
+  final String? deadline;
 
   bool get permitsCapture =>
       ['DRAFT', 'OPEN'].contains(state) && !sealed && disposition == null;
@@ -436,7 +437,7 @@ class V2Status {
         throw const FormatException('Inconsistent terminal successor status.');
       }
     }
-    return V2Status(state as String, sealed, count, disposition as String?);
+    return V2Status(state as String, sealed, count, disposition as String?, value['sync_deadline'] as String?);
   }
 }
 

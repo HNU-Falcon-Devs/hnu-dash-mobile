@@ -24,6 +24,9 @@ void _createV2Schema(Database database) {
       capture_closed INTEGER NOT NULL DEFAULT 0 CHECK (capture_closed IN (0,1)),
       disposition TEXT CHECK (disposition IN ('completed','missing','lost','revoked','undrained')),
       server_count INTEGER CHECK (server_count >= 0),
+      server_state TEXT CHECK (server_state IN ('DRAFT','OPEN','SYNCING','FINALIZED')),
+      server_sealed INTEGER CHECK (server_sealed IN (0,1)),
+      server_deadline TEXT,
       intent_count INTEGER CHECK (intent_count >= 0),
       completion_receipt TEXT,
       UNIQUE (preparation_id,staff_user_id,event_id),
@@ -539,25 +542,36 @@ extension OfflineV2Store on SecureAttendanceStore {
       final saved = readV2Preparation(id);
       final counts = v2Counts(id);
       final previous = _database.select(
-        'SELECT server_count FROM offline_v2_preparations '
+        'SELECT server_count, server_state, server_sealed, server_deadline FROM offline_v2_preparations '
         'WHERE preparation_id = ? AND staff_user_id = ?;',
         [id, staffUserId],
-      ).single['server_count'] as int?;
+      ).single;
+      final previousCount = previous['server_count'] as int?;
+      final previousState = previous['server_state'] as String?;
+      final previousDeadline = previous['server_deadline'] as String?;
+      const states = ['DRAFT', 'OPEN', 'SYNCING', 'FINALIZED'];
       if (status.count < counts.submitted ||
-          (previous != null && status.count < previous) ||
+          (previousCount != null && status.count < previousCount) ||
+          (previousState != null && states.indexOf(status.state) < states.indexOf(previousState)) ||
+          (previous['server_sealed'] == 1 && !status.sealed) ||
+          (previousDeadline != null && (status.deadline == null ||
+              offlineInstant(status.deadline).isBefore(offlineInstant(previousDeadline)) ||
+              (previous['server_sealed'] == 1 &&
+                  offlineInstant(status.deadline) != offlineInstant(previousDeadline)))) ||
           (saved.disposition != null &&
               (saved.disposition != status.disposition ||
-                  previous != status.count))) {
+                  previousCount != status.count))) {
         throw StateError('Server status contradicts retained evidence.');
       }
       _database.execute(
         '''
         UPDATE offline_v2_preparations
         SET capture_closed = CASE WHEN ? = 1 THEN 1 ELSE capture_closed END,
-          disposition = ?, server_count = ?
+          disposition = ?, server_count = ?, server_state = ?,
+          server_sealed = ?, server_deadline = ?
         WHERE preparation_id = ? AND staff_user_id = ?;
         ''',
-        [status.permitsCapture ? 0 : 1, status.disposition, status.count, id, staffUserId],
+        [status.permitsCapture ? 0 : 1, status.disposition, status.count, status.state, status.sealed ? 1 : 0, status.deadline, id, staffUserId],
       );
     });
   }

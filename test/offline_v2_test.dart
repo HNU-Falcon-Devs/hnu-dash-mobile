@@ -89,6 +89,7 @@ class FakeClock {
 class FakeV2Backend {
   String state = 'DRAFT';
   bool sealed = false;
+  int deadlineHours = 28;
   String? disposition;
   String? requestId;
   bool losePrepare = false;
@@ -111,7 +112,7 @@ class FakeV2Backend {
     'event_state': state,
     'sync_deadline': ['DRAFT', 'OPEN'].contains(state)
         ? null
-        : issued.add(const Duration(hours: 28)).toIso8601String(),
+        : issued.add(Duration(hours: deadlineHours)).toIso8601String(),
     'sealed': sealed,
     'uploaded_count': claims.length,
     'disposition': disposition,
@@ -465,6 +466,10 @@ void main() {
       expect(controller.counts!.submitted, 1);
       expect(store.unresolvedV2Claims(preparationV2).single.payload, second.payload);
       expect(() => controller.resume(), throwsStateError);
+      backend.sealed = false; // Contradictory server response must fail closed.
+      await expectLater(controller.sync(), throwsStateError);
+      expect(backend.sent, [first.parameters, first.parameters]);
+      backend.sealed = true;
       await expectLater(controller.complete(1), throwsStateError);
       expect(backend.completions, isEmpty);
     });
@@ -479,12 +484,8 @@ void main() {
       await expectLater(controller.sync(), throwsA(isA<PostgrestException>()));
       expect(controller.counts!.queued, 1);
       expect(controller.counts!.attempted, 0);
-      backend.sealed = true;
       backend.denySubmit = null;
-      await expectLater(controller.sync(), throwsStateError);
-      expect(backend.sent, [claim.parameters]);
-      // Synthetic separate unsealed extension scenario: same local UUID.
-      backend.sealed = false;
+      backend.deadlineHours = 30;
       await controller.sync();
       expect(backend.sent, [claim.parameters, claim.parameters]);
       expect(controller.counts!.submitted, 1);
