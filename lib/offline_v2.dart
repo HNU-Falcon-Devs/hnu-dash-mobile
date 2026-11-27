@@ -93,15 +93,14 @@ Future<V2Observation> observeAndroidClock() async {
       'dev.hnudash.mobile/clock_evidence',
     ).invokeMapMethod<String, dynamic>('observe');
     final wall = raw?['wall_ms'];
+    if (wall is! int) return V2Observation(wallAt: fallback);
     return V2Observation(
       elapsedMs: _elapsed(raw?['elapsed_ms']),
       boot: _boot(raw?['boot']),
-      wallAt: wall is int
-          ? DateTime.fromMillisecondsSinceEpoch(
-              wall,
-              isUtc: true,
-            ).toIso8601String()
-          : fallback,
+      wallAt: DateTime.fromMillisecondsSinceEpoch(
+        wall,
+        isUtc: true,
+      ).toIso8601String(),
     );
   } catch (_) {
     return V2Observation(wallAt: fallback);
@@ -421,6 +420,10 @@ class V2Status {
       }
     } else {
       offlineInstant(value['sync_deadline']);
+      if ((state == 'FINALIZED' && (!sealed || disposition == null)) ||
+          (disposition != null && disposition != 'completed' && !sealed)) {
+        throw const FormatException('Inconsistent terminal successor status.');
+      }
     }
     return V2Status(state as String, sealed, count, disposition as String?);
   }
@@ -479,4 +482,44 @@ Map<String, dynamic> v2Completion(
   offlineInstant(value['accounted_at']);
   v2Bool(value['replayed']);
   return value;
+}
+
+void validateV2Clock(Object? raw) {
+  final clock = v2Object(raw, {
+    'anchor_request_elapsed_ms',
+    'anchor_response_elapsed_ms',
+    'qr_elapsed_ms',
+    'confirmation_elapsed_ms',
+    'qr_wall_at',
+    'confirmation_wall_at',
+    'anchor_boot_marker',
+    'capture_boot_marker',
+    'anchor_provenance',
+    'anomaly',
+  });
+  for (final key in [
+    'anchor_request_elapsed_ms',
+    'anchor_response_elapsed_ms',
+    'qr_elapsed_ms',
+    'confirmation_elapsed_ms',
+  ]) {
+    if (clock[key] != null && _elapsed(clock[key]) == null) {
+      throw const FormatException('Invalid elapsed evidence.');
+    }
+  }
+  for (final key in ['qr_wall_at', 'confirmation_wall_at']) {
+    if (clock[key] != null) offlineInstant(clock[key]);
+  }
+  for (final key in ['anchor_boot_marker', 'capture_boot_marker']) {
+    if (clock[key] != null && _boot(clock[key]) == null) {
+      throw const FormatException('Invalid boot evidence.');
+    }
+  }
+  if (!['original', 'replayed', 'missing', 'unknown'].contains(
+        clock['anchor_provenance'],
+      ) ||
+      !['none', 'missing', 'reboot', 'clock_jump', 'inconsistent', 'other']
+          .contains(clock['anomaly'])) {
+    throw const FormatException('Invalid clock classification.');
+  }
 }

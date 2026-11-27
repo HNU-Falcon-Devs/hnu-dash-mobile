@@ -611,6 +611,9 @@ class SecureAttendanceStore {
     offlineUuid(staffUserId);
     offlineUuid(eventId);
     offlineUuid(assignmentId);
+    if (hasUnsettledV2()) {
+      throw StateError('Resolve successor preparation evidence first.');
+    }
     _database.execute('BEGIN IMMEDIATE;');
     try {
       final rows = _database.select(

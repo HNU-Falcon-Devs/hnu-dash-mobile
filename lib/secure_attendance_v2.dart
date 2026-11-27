@@ -358,12 +358,14 @@ extension OfflineV2Store on SecureAttendanceStore {
         throw StateError('Resolve or escalate the original evidence first.');
       }
       final id = const Uuid().v4();
+      final clock = saved.anchor.evidence(saved.preparation.issued, qr, confirmation);
+      validateV2Clock(clock);
       final payload = jsonEncode({
         'p_preparation_id': preparationId,
         'p_capture_id': id,
         'p_checkpoint_id': checkpointId,
         'p_student_id': studentId,
-        'p_clock': saved.anchor.evidence(saved.preparation.issued, qr, confirmation),
+        'p_clock': clock,
       });
       _database.execute(
         '''
@@ -396,6 +398,7 @@ extension OfflineV2Store on SecureAttendanceStore {
         !isApprovedDevelopmentStudentId(payload['p_student_id'] as String?)) {
       throw StateError('Stored successor claim scope is inconsistent.');
     }
+    validateV2Clock(payload['p_clock']);
     return claim;
   }
 
@@ -451,8 +454,34 @@ extension OfflineV2Store on SecureAttendanceStore {
     });
   }
 
+  // A definitive no-admission response is not an ambiguous lost acknowledgement.
+  void markV2NotAdmitted(V2Claim claim) {
+    _v2Transaction(() {
+      final rows = _database.select(
+        'SELECT payload, status FROM offline_v2_claims '
+        'WHERE capture_id = ? AND preparation_id = ? AND staff_user_id = ?;',
+        [claim.id, claim.preparationId, staffUserId],
+      );
+      if (rows.length != 1 ||
+          rows.single['payload'] != claim.payload ||
+          rows.single['status'] != 'attempted') {
+        throw StateError('Original successor attempt unavailable.');
+      }
+      _database.execute(
+        "UPDATE offline_v2_claims SET status = 'queued' "
+        'WHERE capture_id = ? AND staff_user_id = ?;',
+        [claim.id, staffUserId],
+      );
+    });
+  }
+
   void acknowledgeV2(V2Claim claim, Object? raw) {
     final ack = v2Acknowledgement(raw, claim.preparationId, claim.id);
+    if (offlineInstant(ack['received_at']).isBefore(
+      readV2Preparation(claim.preparationId).preparation.issued,
+    )) {
+      throw const FormatException('Acknowledgement predates preparation.');
+    }
     _v2Transaction(() {
       final rows = _database.select(
         '''
