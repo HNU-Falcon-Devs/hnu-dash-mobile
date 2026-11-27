@@ -1,0 +1,42 @@
+name: Android unsigned release verification
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  unsigned-release:
+    name: Development unsigned release
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install pinned Flutter
+        run: |
+          git clone --depth 1 --branch 3.47.9 https://github.com/flutter/flutter.git "$RUNNER_TEMP/flutter"
+          test "$(git -C "$RUNNER_TEMP/flutter" rev-parse HEAD)" = "c197ca5199e9ee5661e865596c9c07294dfab51c"
+          echo "$RUNNER_TEMP/flutter/bin" >> "$GITHUB_PATH"
+          "$RUNNER_TEMP/flutter/bin/flutter" --version
+      - name: Resolve locked dependencies and inventory
+        run: |
+          git rev-parse HEAD
+          sha256sum pubspec.lock
+          flutter pub get --enforce-lockfile
+          git diff --exit-code -- pubspec.lock
+          flutter pub deps --json
+          python3 scripts/verify_unsigned_release.py inventory
+      - name: Build unsigned development APK
+        run: |
+          flutter build apk --release --no-pub --dart-define=SUPABASE_URL=https://hnu-dash-qa.invalid --dart-define=SUPABASE_PUBLISHABLE_KEY=synthetic-development-only
+          git diff --exit-code -- pubspec.lock
+      - name: Inspect Android release dependencies
+        working-directory: android
+        run: ./gradlew :app:dependencies --configuration releaseRuntimeClasspath --console=plain
+      - name: Verify unsigned APK and native packaging
+        run: python3 scripts/verify_unsigned_release.py apk build/app/outputs/flutter-apk/app-release.apk
+      # Do not upload, sign, install, publish or distribute the APK.
