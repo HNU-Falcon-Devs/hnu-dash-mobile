@@ -435,8 +435,8 @@ class SecureAttendanceStore {
       throw ArgumentError('The event, checkpoint, or Student ID is invalid.');
     }
 
-    return this._v2Transaction(() {
-      if (this.hasUnsettledV2()) {
+    return _v2Transaction(() {
+      if (hasUnsettledV2()) {
         throw StateError('Resolve successor preparation evidence first.');
       }
 
@@ -613,11 +613,11 @@ class SecureAttendanceStore {
     offlineUuid(staffUserId);
     offlineUuid(eventId);
     offlineUuid(assignmentId);
-    if (this.hasUnsettledV2()) {
-      throw StateError('Resolve successor preparation evidence first.');
-    }
     _database.execute('BEGIN IMMEDIATE;');
     try {
+      if (hasUnsettledV2()) {
+        throw StateError('Resolve successor preparation evidence first.');
+      }
       final rows = _database.select(
         '''
         SELECT request_id FROM offline_requests
@@ -749,10 +749,10 @@ class SecureAttendanceStore {
           'Resolve or escalate the original evidence first.',
         );
       }
-      if (this.hasUnsettledV2()) {
+      if (hasUnsettledV2()) {
         throw StateError('Resolve successor preparation evidence first.');
       }
-      final count = this.installationUnresolvedCount();
+      final count = installationUnresolvedCount();
       if (count >= offlineQueueCapacity) {
         throw const OfflineCaptureException(
           'The unresolved offline queue is full. Sync or contact support before capturing again.',

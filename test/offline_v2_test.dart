@@ -154,8 +154,9 @@ class FakeV2Backend {
         return prepResponse(request, replayed: replay, state: state);
       case V2Rpc.status:
         expect(params, {'p_preparation_id': preparationV2});
-        if (denyStatus)
+        if (denyStatus) {
           throw const PostgrestException(message: 'denied', code: '42501');
+        }
         return status();
       case V2Rpc.submit:
         sent.add(Map<String, dynamic>.from(params));

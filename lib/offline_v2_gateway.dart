@@ -50,7 +50,7 @@ class V2PendingQr {
 /// synthetic context and the existing securely restored session binding.
 /// Account epoch must change on sign-out/switch, including A -> B -> A.
 class OfflineV2Controller {
-  OfflineV2Controller({
+  factory OfflineV2Controller({
     required SecureAttendanceStore store,
     required CurrentStaffId currentStaffId,
     required int Function() accountEpoch,
@@ -58,15 +58,26 @@ class OfflineV2Controller {
     required bool Function() foreground,
     required V2RpcCall rpc,
     V2Clock clock = observeAndroidClock,
-  }) : _store = store,
-       _owner = store.staffUserId,
-       _currentStaffId = currentStaffId,
-       _accountEpoch = accountEpoch,
-       _ownerEpoch = accountEpoch(),
-       _liveSession = liveSession,
-       _foreground = foreground,
-       _rpc = rpc,
-       _clock = clock;
+  }) => OfflineV2Controller._(
+    store,
+    currentStaffId,
+    accountEpoch,
+    liveSession,
+    foreground,
+    rpc,
+    clock,
+  );
+
+  OfflineV2Controller._(
+    this._store,
+    this._currentStaffId,
+    this._accountEpoch,
+    this._liveSession,
+    this._foreground,
+    this._rpc,
+    this._clock,
+  ) : _owner = _store.staffUserId,
+      _ownerEpoch = _accountEpoch();
 
   final SecureAttendanceStore _store;
   final String _owner;

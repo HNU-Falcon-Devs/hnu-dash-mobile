@@ -300,11 +300,12 @@ class _OfflineV2FixtureWorkspaceState extends State<OfflineV2FixtureWorkspace>
                       ? null
                       : () => _run(() async {
                           final status = await controller.checkStatus();
-                          if (mounted)
+                          if (mounted) {
                             setState(
                               () => _message =
                                   'Server: ${status.state}; submitted: ${status.count}.',
                             );
+                          }
                         }),
                   child: const Text('Check server status'),
                 ),
