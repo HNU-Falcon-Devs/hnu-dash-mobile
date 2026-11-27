@@ -936,7 +936,7 @@ void main() {
             ),
           ),
         );
-        await tester.tap(find.text('Select synthetic preparation'));
+        await tester.tap(find.byType(DropdownButton<int>));
         await tester.pumpAndSettle();
         await tester.tap(find.text('Fixture 1').last);
         await tester.pumpAndSettle();
@@ -944,7 +944,7 @@ void main() {
         await tester.pumpAndSettle();
         await tester.tap(find.text('Resume local collection'));
         await tester.pumpAndSettle();
-        await tester.tap(find.text('Select checkpoint'));
+        await tester.tap(find.byType(DropdownButton<String>));
         await tester.pumpAndSettle();
         await tester.tap(find.text('Entrance (IN)').last);
         await tester.pumpAndSettle();
@@ -952,10 +952,16 @@ void main() {
         await tester.tap(find.text('Scan QR'));
         await tester.pumpAndSettle();
         await tester.tap(find.text('Emit synthetic QR'));
-        await tester.pumpAndSettle();
+        // A busy indicator animates behind the modal until capture finishes.
+        // Advance route transitions without waiting for all tickers to stop.
+        await tester.pump();
+        await tester.pump(const Duration(milliseconds: 500));
+        await tester.pump(const Duration(milliseconds: 500));
         expect(find.text('Schedule warning'), findsOneWidget);
         await tester.tap(find.text('Continue'));
-        await tester.pumpAndSettle();
+        await tester.pump();
+        await tester.pump(const Duration(milliseconds: 500));
+        await tester.pump(const Duration(milliseconds: 500));
         expect(find.text('Confirm local capture'), findsOneWidget);
         expect(find.textContaining('••••3456'), findsOneWidget);
         expect(find.textContaining('00000123456'), findsNothing);
