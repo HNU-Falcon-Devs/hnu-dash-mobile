@@ -19,11 +19,13 @@ jobs:
           set -euo pipefail
           candidate=5894a871d4d4353bc64e33fd85708d1c6988946c
           original_harness=1b4823c6cee38c97cdfe53f5512a364f4dba7b17
-          test "$(git rev-parse HEAD^)" = "$original_harness"
+          previous_harness=da71cdb95c4923f108aa91e239bfa0d972623515
+          test "$(git rev-parse HEAD^)" = "$previous_harness"
+          test "$(git rev-parse "$previous_harness^")" = "$original_harness"
           test "$(git rev-parse "$original_harness^")" = "$candidate"
           git merge-base --is-ancestor "$candidate" HEAD
-          test "$(git rev-list --count "$candidate"..HEAD)" = 2
-          echo "Candidate ancestry verified: $candidate -> $original_harness -> $(git rev-parse HEAD)"
+          test "$(git rev-list --count "$candidate"..HEAD)" = 3
+          echo "Candidate ancestry verified: $candidate -> $original_harness -> $previous_harness -> $(git rev-parse HEAD)"
           test "$(git rev-parse "$candidate^{tree}")" = 74dab75712beb66fc163a911ca2cc1efcdfae1fa
           git diff --name-only "$candidate" HEAD
           test "$(git diff --name-only "$candidate" HEAD)" = .github/workflows/android-release-r1-qa.yml
@@ -32,155 +34,218 @@ jobs:
           test "$(git -C "$RUNNER_TEMP/flutter" rev-parse HEAD)" = c197ca5199e9ee5661e865596c9c07294dfab51c
           echo "$RUNNER_TEMP/flutter/bin" >> "$GITHUB_PATH"
           "$RUNNER_TEMP/flutter/bin/flutter" --version
-      - name: Resolve locked dependencies and configure Gradle
+      - name: Resolve locked dependencies and preflight tools
         run: |
+          set -euo pipefail
+          for tool in git java python3 readelf curl timeout sha256sum; do command -v "$tool"; done
+          test -d "$ANDROID_HOME"
+          java -version
+          python3 --version
           flutter pub get --enforce-lockfile
           git diff --exit-code -- pubspec.lock
-          printf 'sdk.dir=%s\nflutter.sdk=%s\n' "$ANDROID_HOME" "$RUNNER_TEMP/flutter" > android/local.properties
+          sha256sum pubspec.lock
+      - name: Build and verify unsigned candidate first
+        id: build
+        timeout-minutes: 15
+        run: |
+          set -euo pipefail
+          flutter build apk --release --no-pub --dart-define=SUPABASE_URL=https://hnu-dash-qa.invalid --dart-define=SUPABASE_PUBLISHABLE_KEY=synthetic-development-only
+          test -s build/app/outputs/flutter-apk/app-release.apk
+          test -x android/gradlew
+          test -s android/gradle/wrapper/gradle-wrapper.jar
+          test -s android/local.properties
+          git diff --exit-code -- pubspec.lock
+          python3 scripts/verify_unsigned_release.py apk build/app/outputs/flutter-apk/app-release.apk
+          echo 'BUILD PREREQUISITES PASS: unsigned APK, generated wrapper and JAR'
       - name: Configuration-only signing guard controls and negatives
+        id: guard
+        if: ${{ steps.build.outcome == 'success' }}
+        continue-on-error: true
+        timeout-minutes: 7
         working-directory: android
         run: |
           set -euo pipefail
-          echo 'CONTROL: ./gradlew :app:help --console=plain'
-          ./gradlew :app:help --console=plain
           guard='Signing overrides are not authorized for development-only release verification.'
-          for entry in 'store.file=/nonexistent/r1-dummy.jks' 'store.password=r1-dummy' 'key.alias=r1-dummy' 'key.password=r1-dummy' 'store.type=JKS' 'v1-enabled=true' 'v2-enabled=true'; do
-            echo "NEGATIVE: ./gradlew :app:help --console=plain -Pandroid.injected.signing.$entry"
+          failed=0
+          control() {
+            local label="$1" rc
             set +e
-            ./gradlew :app:help --console=plain "-Pandroid.injected.signing.$entry" > "$RUNNER_TEMP/r1-guard.log" 2>&1
+            timeout 40s ./gradlew :app:help --console=plain > "$RUNNER_TEMP/r1-control-$label.log" 2>&1
             rc=$?
             set -e
-            cat "$RUNNER_TEMP/r1-guard.log"
-            test "$rc" -ne 0
-            grep -F "$guard" "$RUNNER_TEMP/r1-guard.log"
-            echo "GUARD PASS: $entry exit=$rc"
+            cat "$RUNNER_TEMP/r1-control-$label.log"
+            echo "CONTROL RESULT $label exit=$rc"
+            if [ "$rc" -ne 0 ]; then failed=1; fi
+          }
+          control pre
+          for entry in 'store.file=/nonexistent/r1-dummy.jks' 'store.password=r1-dummy' 'key.alias=r1-dummy' 'key.password=r1-dummy' 'store.type=JKS' 'v1-enabled=true' 'v2-enabled=true'; do
+            name="$(printf '%s' "$entry" | cut -d= -f1)"
+            set +e
+            timeout 40s ./gradlew :app:help --console=plain "-Pandroid.injected.signing.$entry" > "$RUNNER_TEMP/r1-guard-$name.log" 2>&1
+            rc=$?
+            set -e
+            cat "$RUNNER_TEMP/r1-guard-$name.log"
+            if [ "$rc" -ne 0 ] && [ "$rc" -ne 124 ] && grep -Fq "$guard" "$RUNNER_TEMP/r1-guard-$name.log"; then
+              echo "GUARD RESULT $name exit=$rc PASS"
+            else
+              echo "GUARD RESULT $name exit=$rc FAIL_OR_INCONCLUSIVE"
+              failed=1
+            fi
           done
-          echo 'POST-NEGATIVE CONTROL'
-          ./gradlew :app:help --console=plain
-      - name: Build exact unsigned candidate with diagnostic logging
-        run: |
-          set -euo pipefail
-          echo 'flutter build apk --release --no-pub -v (synthetic invalid URL and dummy public config)'
-          if ! flutter build apk --release --no-pub -v --dart-define=SUPABASE_URL=https://hnu-dash-qa.invalid --dart-define=SUPABASE_PUBLISHABLE_KEY=synthetic-development-only > "$RUNNER_TEMP/r1-build.log" 2>&1; then
-            tail -n 180 "$RUNNER_TEMP/r1-build.log"
-            exit 1
-          fi
-          grep -Ei 'llvm-strip|stripReleaseDebugSymbols|mergeReleaseNativeLibs|ndkVersion|ndk/|Built .*apk|sqlcipher' "$RUNNER_TEMP/r1-build.log" | tail -n 100 || true
-          git diff --exit-code -- pubspec.lock
-          python3 scripts/verify_unsigned_release.py apk build/app/outputs/flutter-apk/app-release.apk
-      - name: Trace SQLCipher bytes through upstream, hooks, Gradle and APK
+          control post
+          exit "$failed"
+      - name: Trace SQLCipher independently of signing test outcome
+        id: provenance
+        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
+        continue-on-error: true
+        timeout-minutes: 7
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          python3 - <<'PY'
-          import hashlib, json, os, pathlib, shutil, subprocess, tempfile, zipfile
-          from collections import defaultdict
+          python3 -u - <<'PY'
+          import hashlib, json, os, pathlib, shutil, subprocess, zipfile
           P=pathlib.Path
           root=P.cwd()
           tmp=P(os.environ["RUNNER_TEMP"])/"r1-provenance"
           tmp.mkdir()
-          tag="sqlite3-3.9.1"
           repo="simolus3/sqlite3.dart"
+          tag="sqlite3-3.9.1"
           pinned="f144d1c56b22d5772d164c7c3f20eb1df482fcf3"
           expected={
             "armeabi-v7a":("arm","0999b58c9d7b08a08d840fecebe6a820d8cc9dfb59197ca68ff27e5514c768ba","07986f9bdacc6dd2f7101e40bec47f1bac4dee142a97ffd7a01a39a842bd44b1"),
             "arm64-v8a":("arm64","e615e2750c5fa455d5a7e70fe4df86c3a2f5696367ceb021d46a9262120df046","748f9ca516cc272a717621bf71ce4e2a9282e9e49a9db853f2e43f2dc2f714c5"),
-            "x86_64":("x64","bae3621c9f0417583e2234ec93eab65e85bf91d6c8131b7db38403a83a59507b","ba55909bf7bbd44ca6f72cf985e2eaa0555179e39296e68f3d1bd4f4708e4"),
+            "x86_64":("x64","bae3621c9f0417583e2234ec93eab65e85bf91d6c8131b7db38403a83a59507b","ba55909bf7bbd44ca6f72cf985e2eaa0555179e39296e96e68f3d1bd4f4708e4"),
           }
           def h(p): return hashlib.sha256(p.read_bytes()).hexdigest()
-          def out(*cmd):
-            return subprocess.check_output([str(x) for x in cmd],text=True,stderr=subprocess.STDOUT)
           def fetch(url,path):
-            subprocess.run(["curl","--fail","--location","--silent","--show-error","--max-time","90",url,"-o",str(path)],check=True)
+            subprocess.run(["curl","--fail","--location","--silent","--show-error","--max-time","25",url,"-o",str(path)],check=True)
+          def out(*cmd):
+            return subprocess.check_output([str(x) for x in cmd],text=True,stderr=subprocess.STDOUT,timeout=15)
           def meta(path):
-            print("ELF",str(path), "bytes",path.stat().st_size,"sha256",h(path))
+            print("ELF",str(path),"bytes",path.stat().st_size,"sha256",h(path))
             for args in [("-hW",),("-nW",),("-SW",),("-lW",),("-dW",)]:
-              value=out("readelf",*args,path)
-              print("\n".join(l for l in value.splitlines() if any(x in l for x in ("Class:","Machine:","Build ID:"," .symtab "," .strtab "," .debug"," LOAD ","NEEDED"))))
-          tagfile=tmp/"tag.json"
-          fetch(f"https://api.github.com/repos/{repo}/commits/{tag}",tagfile)
-          assert json.loads(tagfile.read_text())["sha"]==pinned, "upstream tag drift"
-          release=tmp/"release.json"
-          fetch(f"https://api.github.com/repos/{repo}/releases/tags/{tag}",release)
-          assets={a["name"]:a for a in json.loads(release.read_text())["assets"]}
+              try:
+                value=out("readelf",*args,path)
+                print("\n".join(l for l in value.splitlines() if any(x in l for x in ("Class:","Machine:","Build ID:"," .symtab "," .strtab "," .debug"," LOAD ","NEEDED"))))
+              except (OSError,subprocess.SubprocessError) as e:
+                print("ELF METADATA UNAVAILABLE",type(e).__name__)
+          metadata_ok=False
+          try:
+            tagfile=tmp/"tag.json"
+            fetch(f"https://api.github.com/repos/{repo}/commits/{tag}",tagfile)
+            assert json.loads(tagfile.read_text())["sha"]==pinned, "upstream tag drift"
+            release=tmp/"release.json"
+            fetch(f"https://api.github.com/repos/{repo}/releases/tags/{tag}",release)
+            assets={a["name"]:a for a in json.loads(release.read_text())["assets"]}
+            for arch,want,_ in expected.values():
+              assert assets[f"libsqlcipher.{arch}.android.so"]["digest"]=="sha256:"+want
+            metadata_ok=True
+            print("UPSTREAM METADATA PASS",pinned)
+          except Exception as e:
+            print("UPSTREAM METADATA INCONCLUSIVE",type(e).__name__,str(e))
+          table_ok=False
           for source in ["sqlite3/lib/src/hook/asset_hashes.dart","tool/generate_sbom.dart","tool/download_sqlite.dart"]:
-            dst=tmp/P(source).name
-            fetch(f"https://raw.githubusercontent.com/{repo}/{pinned}/{source}",dst)
-            print("PINNED SOURCE",source,h(dst))
-            print("\n".join(l for l in dst.read_text().splitlines() if any(k in l for k in ("releaseTag","libsqlcipher.arm.android.so","libsqlcipher.arm64.android.so","libsqlcipher.x64.android.so","sqlcipherVersion =","openSslVersion =","statically link","BSD-3-Clause","Apache-2.0"))))
-          # Inventory actual hook and Gradle files before creating any comparison copies.
+            try:
+              dst=tmp/P(source).name
+              fetch(f"https://raw.githubusercontent.com/{repo}/{pinned}/{source}",dst)
+              data=dst.read_text()
+              print("PINNED SOURCE",source,h(dst))
+              print("\n".join(l for l in data.splitlines() if any(k in l for k in ("releaseTag","libsqlcipher.arm.android.so","libsqlcipher.arm64.android.so","libsqlcipher.x64.android.so","sqlcipherVersion =","openSslVersion =","statically link","BSD-3-Clause","Apache-2.0"))))
+              if source.endswith("asset_hashes.dart"):
+                table_ok=all(f"'libsqlcipher.{arch}.android.so': '{want}'" in data for arch,want,_ in expected.values())
+            except Exception as e:
+              print("PINNED SOURCE UNAVAILABLE",source,type(e).__name__)
           paths=[]
           for base in [root/".dart_tool",root/"build",root/"android/app/build"]:
             if base.exists():
               paths.extend(p for p in base.rglob("*.so") if "sqlcipher" in p.name.lower() and p.is_file())
           paths=sorted(set(paths))
+          hashes={}
           for p in paths:
-            print("DISCOVERED",str(p.relative_to(root)),h(p))
-          ndk=P(os.environ["ANDROID_HOME"])/"ndk"
-          tools=sorted(ndk.glob("*/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-strip"))
-          print("LLVM STRIP CANDIDATES", [str(t) for t in tools])
-          # Read exact configured Flutter NDK default and compare installed tool.
-          sdk=P(os.environ["RUNNER_TEMP"])/"flutter"
-          for p in (sdk/"packages/flutter_tools/gradle").rglob("*"):
-            if p.is_file() and p.suffix in (".kt",".groovy"):
-              for l in p.read_text(errors="replace").splitlines():
-                if "ndkVersion" in l and '"' in l:
-                  print("SDK NDK SOURCE",str(p.relative_to(sdk)),l.strip())
+            hashes[p]=h(p)
+            print("DISCOVERED",str(p.relative_to(root)),hashes[p])
+          ndk_version="28.2.13676358"
+          ndk=P(os.environ["ANDROID_HOME"])/"ndk"/ndk_version
+          tool=ndk/"toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-strip"
+          print("NDK STRIP TOOL",str(tool),"exists",tool.is_file())
+          if tool.is_file():
+            print(out(tool,"--version"))
           results=[]
           apk=root/"build/app/outputs/flutter-apk/app-release.apk"
           with zipfile.ZipFile(apk) as z:
             for abi,(arch,want,old) in expected.items():
-              asset=f"libsqlcipher.{arch}.android.so"
-              a=assets[asset]
-              assert a["digest"]=="sha256:"+want, f"release digest metadata mismatch {abi}"
-              assert want in (tmp/"asset_hashes.dart").read_text(), "hook hash table mismatch"
-              upstream=tmp/asset
-              fetch(a["browser_download_url"],upstream)
-              assert h(upstream)==want, "upstream bytes mismatch"
-              print("UPSTREAM VERIFIED",abi,want)
-              # Verify an actual SBOM attestation when exposed by upstream; lack is not a byte-chain failure.
-              att=subprocess.run(["gh","attestation","verify",str(upstream),"--repo",repo,"--predicate-type","https://cyclonedx.org/bom","--format","json"],capture_output=True,text=True,timeout=90)
-              print("SBOM ATTESTATION",abi,"exit",att.returncode)
-              if att.returncode==0:
-                print("SBOM RECEIPT",att.stdout[:18000])
-              else:
-                print(att.stderr[:3000])
-              packaged=tmp/f"{abi}-packaged.so"
-              packaged.write_bytes(z.read(f"lib/{abi}/libsqlcipher.so"))
-              final=h(packaged)
-              matching=[p for p in paths if h(p)==want or h(p)==final]
-              hook=[p for p in matching if ".dart_tool" in p.parts and h(p)==want]
-              native=[p for p in matching if "native_assets" in p.parts and h(p)==want]
-              merged=[p for p in matching if "merged_native_libs" in p.parts and abi in p.parts and h(p)==want]
-              stripped=[p for p in matching if "stripped_native_libs" in p.parts and abi in p.parts and h(p)==final]
-              transforms=[]
-              if merged:
-                for tool in tools:
-                  copy=tmp/f"{abi}-{tool.parents[4].name}-strip.so"
-                  shutil.copyfile(merged[0],copy)
-                  print("TRANSFORM",str(tool),"--strip-unneeded",str(copy))
-                  rc=subprocess.run([str(tool),"--strip-unneeded",str(copy)],capture_output=True,text=True)
-                  if rc.returncode==0:
-                    got=h(copy)
-                    print("TRANSFORM RESULT",abi,str(tool),got,"match",got==final)
-                    if got==final:
-                      transforms.append(str(tool))
-                      print(out(tool,"--version"))
-                  else: print(rc.stderr[:1000])
-              for p in [upstream,*merged[:1],*stripped[:1],packaged]:
-                meta(p)
-              ok=bool(hook and merged and stripped and (want==final or transforms))
-              row={"abi":abi,"upstream":want,"hook":[str(p.relative_to(root)) for p in hook],"native_assets":[str(p.relative_to(root)) for p in native],"merged":[str(p.relative_to(root)) for p in merged],"stripped":[str(p.relative_to(root)) for p in stripped],"apk":final,"previous_apk":old,"prior_match":final==old,"reproducing_tools":transforms,"sbom_attestation_verified":att.returncode==0,"byte_chain":"PASS" if ok else "INCONCLUSIVE"}
+              row={"abi":abi,"expected_upstream":want,"previous_apk":old,"metadata_verified":metadata_ok,"hook_table_verified":table_ok,"byte_chain":"INCONCLUSIVE","sbom_attestation":"NOT_VERIFIED"}
+              try:
+                asset=f"libsqlcipher.{arch}.android.so"
+                upstream=tmp/asset
+                packaged=tmp/f"{abi}-packaged.so"
+                packaged.write_bytes(z.read(f"lib/{abi}/libsqlcipher.so"))
+                final=h(packaged)
+                row.update(apk=final,prior_match=final==old)
+                hook=[p for p in paths if ".dart_tool" in p.parts and f"download-{want[:8]}" in p.parts]
+                native=[p for p in paths if any("native_assets" in part for part in p.parts) and (abi in p.parts or hashes[p]==want)]
+                merged=[p for p in paths if "merged_native_libs" in p.parts and abi in p.parts]
+                stripped=[p for p in paths if "stripped_native_libs" in p.parts and abi in p.parts]
+                for label,items in [("hook",hook),("native_assets",native),("merged",merged),("stripped",stripped)]:
+                  row[label]=[{"path":str(p.relative_to(root)),"sha256":hashes[p]} for p in items]
+                try:
+                  fetch(f"https://github.com/{repo}/releases/download/{tag}/{asset}",upstream)
+                  row["downloaded_upstream"]=h(upstream)
+                  if h(upstream)!=want:
+                    row["byte_chain"]="FAIL"
+                    print("UPSTREAM HASH MISMATCH",abi,h(upstream),want)
+                except Exception as e:
+                  print("UPSTREAM DOWNLOAD INCONCLUSIVE",abi,type(e).__name__)
+                transforms=[]
+                for source in [p for p in merged if hashes[p]==want][:1]:
+                  if tool.is_file():
+                    for flag in ["--strip-unneeded","--strip-debug"]:
+                      copy=tmp/f"{abi}-{flag[2:]}.so"
+                      shutil.copyfile(source,copy)
+                      rc=subprocess.run([str(tool),flag,str(copy)],capture_output=True,text=True,timeout=15)
+                      got=h(copy)
+                      print("TRANSFORM",abi,str(tool),flag,"exit",rc.returncode,"sha256",got,"match",got==final)
+                      if rc.returncode==0 and got==final: transforms.append(flag)
+                row["reproduced_flags"]=transforms
+                row["ndk"]=ndk_version
+                for p in ([upstream] if upstream.is_file() else [])+hook[:1]+merged[:1]+stripped[:1]+[packaged]:
+                  meta(p)
+                if row["byte_chain"]!="FAIL":
+                  if any(hashes[p]!=want for p in hook+merged) or any(hashes[p]!=final for p in stripped):
+                    row["byte_chain"]="FAIL"
+                  elif metadata_ok and table_ok and row.get("downloaded_upstream")==want and hook and merged and stripped and (want==final or transforms):
+                    row["byte_chain"]="PASS"
+                if upstream.is_file() and row.get("downloaded_upstream")==want and shutil.which("gh"):
+                  try:
+                    att=subprocess.run(["gh","attestation","verify",str(upstream),"--repo",repo,"--predicate-type","https://cyclonedx.org/bom","--format","json"],capture_output=True,text=True,timeout=30)
+                    row["sbom_attestation"]="PASS" if att.returncode==0 else "UNAVAILABLE_OR_UNVERIFIED"
+                    row["sbom_exit"]=att.returncode
+                    print("SBOM ATTESTATION",abi,"exit",att.returncode)
+                    if att.returncode==0: print("SBOM RECEIPT",att.stdout[:18000])
+                    else: print(att.stderr[:1500])
+                  except (OSError,subprocess.SubprocessError) as e:
+                    print("SBOM ATTESTATION INCONCLUSIVE",abi,type(e).__name__)
+              except Exception as e:
+                row["error"]=f"{type(e).__name__}: {e}"
               print("R1 RESULT",json.dumps(row))
               results.append(row)
           print("R1 SUMMARY",json.dumps(results))
           if not all(r["byte_chain"]=="PASS" for r in results):
-            raise SystemExit("INCONCLUSIVE: one or more SQLCipher byte chains incomplete")
-          print("PASS: exact upstream -> hook -> merged -> reproduced strip -> stripped -> APK chains for all three ABIs. Not redistribution clearance.")
+            raise SystemExit("FAIL_OR_INCONCLUSIVE: incomplete or mismatched byte chain")
+          print("PASS: exact upstream -> hook -> merged -> reproduced strip -> stripped -> APK chains. SBOM and redistribution separately assessed.")
           PY
-      - name: Verify tracked candidate unchanged
+      - name: Final independent outcome gate and tracked tree preservation
         if: always()
+        env:
+          BUILD_OUTCOME: ${{ steps.build.outcome }}
+          GUARD_OUTCOME: ${{ steps.guard.outcome }}
+          PROVENANCE_OUTCOME: ${{ steps.provenance.outcome }}
         run: |
+          set -euo pipefail
+          echo "R1 OUTCOMES build=$BUILD_OUTCOME guard=$GUARD_OUTCOME provenance=$PROVENANCE_OUTCOME"
           git diff --exit-code
           git status --short
+          test "$BUILD_OUTCOME" = success
+          test "$GUARD_OUTCOME" = success
+          test "$PROVENANCE_OUTCOME" = success
       # QA-only branch. No APK upload, real keys, deployment, or distribution.
