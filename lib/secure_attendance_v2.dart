@@ -91,7 +91,8 @@ class V2SavedPreparation {
 
 /// A structurally valid status conflicts with retained authoritative evidence.
 class V2StatusContradiction extends StateError {
-  V2StatusContradiction() : super('Server status contradicts retained evidence.');
+  V2StatusContradiction()
+    : super('Server status contradicts retained evidence.');
 }
 
 enum V2ClaimState { queued, attempted, submitted, blocked }
