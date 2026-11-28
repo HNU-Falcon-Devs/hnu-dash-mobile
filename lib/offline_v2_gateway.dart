@@ -405,6 +405,12 @@ class OfflineV2Controller {
         _store.stopV2Capture(id);
       }
       rethrow;
+    } on V2StatusContradiction {
+      _ensureNetwork(epoch);
+      // The rejected status transaction has rolled back. Persist the capture
+      // closure separately without replacing the retained server evidence.
+      _store.stopV2Capture(id);
+      rethrow;
     } on FormatException {
       _ensureNetwork(epoch);
       // Wrong-policy/malformed responses are unsafe to recover from locally.

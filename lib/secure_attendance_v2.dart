@@ -89,6 +89,11 @@ class V2SavedPreparation {
       !captureClosed && disposition == null && intent == null;
 }
 
+/// A structurally valid status conflicts with retained authoritative evidence.
+class V2StatusContradiction extends StateError {
+  V2StatusContradiction() : super('Server status contradicts retained evidence.');
+}
+
 enum V2ClaimState { queued, attempted, submitted, blocked }
 
 class V2Claim {
@@ -592,7 +597,7 @@ extension OfflineV2Store on SecureAttendanceStore {
           (saved.disposition != null &&
               (saved.disposition != status.disposition ||
                   previousCount != status.count))) {
-        throw StateError('Server status contradicts retained evidence.');
+        throw V2StatusContradiction();
       }
       _database.execute(
         '''

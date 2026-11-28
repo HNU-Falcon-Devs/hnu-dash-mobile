@@ -607,6 +607,51 @@ void main() {
     );
 
     test(
+      'contradictory OPEN to DRAFT status durably stops capture',
+      () async {
+        await prepare();
+        start();
+        final claim = await capture();
+        controller.stop();
+        backend.state = 'OPEN';
+        expect((await controller.checkStatus()).state, 'OPEN');
+        expect(controller.selected!.canCapture, isTrue);
+
+        backend.state = 'DRAFT';
+        await expectLater(
+          controller.checkStatus(),
+          throwsA(isA<V2StatusContradiction>()),
+        );
+        expect(controller.selected!.canCapture, isFalse);
+        expect(() => controller.resume(), throwsStateError);
+        expect(
+          store.unresolvedV2Claims(preparationV2).single.payload,
+          claim.payload,
+        );
+
+        await store.close();
+        store = await open();
+        controller = bind();
+        controller.selectFixture(scope);
+        expect(controller.selected!.canCapture, isFalse);
+        expect(() => controller.resume(), throwsStateError);
+        expect(
+          store.unresolvedV2Claims(preparationV2).single.payload,
+          claim.payload,
+        );
+        // The rejected status must not replace the retained OPEN state.
+        await expectLater(
+          controller.checkStatus(),
+          throwsA(isA<V2StatusContradiction>()),
+        );
+        backend.state = 'OPEN';
+        expect((await controller.checkStatus()).state, 'OPEN');
+        expect(() => controller.resume(), throwsStateError);
+        expect(backend.sent, isEmpty);
+      },
+    );
+
+    test(
       'definitive deadline denial is queued; extension allows exact retry',
       () async {
         await prepare();
