@@ -157,7 +157,7 @@ void main() {
     await store.close();
     final migrated = sqlite3.open(databasePath);
     migrated.execute("PRAGMA key = \"x'$key'\";");
-    expect(migrated.select('PRAGMA user_version;').single.values.single, 3);
+    expect(migrated.select('PRAGMA user_version;').single.values.single, 4);
     expect(
       migrated
           .select("SELECT student_id FROM attendance_scans WHERE legacy = 1;")

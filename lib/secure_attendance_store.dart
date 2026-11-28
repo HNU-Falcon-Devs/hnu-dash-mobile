@@ -11,7 +11,10 @@ import 'package:uuid/uuid.dart';
 import 'development_scan_policy.dart';
 import 'offline_capture.dart';
 import 'offline_completion.dart';
+import 'offline_v2.dart';
 import 'secure_value_store.dart';
+
+part 'secure_attendance_v2.dart';
 
 enum ScanStatus { pending, accepted, rejected, duplicate, blocked, legacy }
 
@@ -152,7 +155,7 @@ class SecureAttendanceStore {
         .single
         .values
         .single;
-    if (version is! int || version < 0 || version > 3) {
+    if (version is! int || version < 0 || version > 4) {
       throw StateError('Unsupported encrypted attendance schema.');
     }
     database.execute('PRAGMA foreign_keys = ON;');
@@ -169,11 +172,20 @@ class SecureAttendanceStore {
       })) {
         throw StateError('Encrypted attendance schema is incomplete.');
       }
-      if (version == 3) {
+      if (version >= 3) {
         if (!tables.contains('offline_accounting')) {
           throw StateError('Encrypted accounting schema is incomplete.');
         }
-        return;
+        if (version == 4) {
+          if (!tables.containsAll({
+            'offline_v2_requests',
+            'offline_v2_preparations',
+            'offline_v2_claims',
+          })) {
+            throw StateError('Encrypted successor schema is incomplete.');
+          }
+          return;
+        }
       }
     }
     if (version == 1 && !tables.contains(tableName)) {
@@ -269,7 +281,8 @@ class SecureAttendanceStore {
           CHECK (intent_count IS NOT NULL OR terminal IS NOT NULL)
         );
       ''');
-      database.execute('PRAGMA user_version = 3;');
+      _createV2Schema(database);
+      database.execute('PRAGMA user_version = 4;');
       database.execute('COMMIT;');
     } catch (_) {
       database.execute('ROLLBACK;');
@@ -422,55 +435,61 @@ class SecureAttendanceStore {
       throw ArgumentError('The event, checkpoint, or Student ID is invalid.');
     }
 
-    // A terminal conflict must not be bypassed by creating a new UUID for
-    // the same event/checkpoint/Student ID. It remains support-only evidence.
-    final conflict = _database.select(
-      '''
-      SELECT scan_id FROM $tableName
-      WHERE staff_user_id = ? AND event_id = ? AND checkpoint_id = ?
-        AND student_id = ? AND submission_status = 'blocked' AND legacy = 0
-      LIMIT 1;
-    ''',
-      [staffUserId, eventId, checkpointId, studentId],
-    );
-    final offlineConflict = _database.select(
-      '''
-      SELECT capture_id FROM offline_claims
-      WHERE staff_user_id = ? AND event_id = ? AND checkpoint_id = ?
-        AND student_id = ? AND status != 'submitted' LIMIT 1;
-      ''',
-      [staffUserId, eventId, checkpointId, studentId],
-    );
-    if (conflict.isNotEmpty || offlineConflict.isNotEmpty) {
-      throw StateError(
-        'This scan payload has unresolved evidence. Contact support.',
-      );
-    }
+    return _v2Transaction(() {
+      if (hasUnsettledV2()) {
+        throw StateError('Resolve successor preparation evidence first.');
+      }
 
-    final record = ScanRecord(
-      scanId: const Uuid().v4(),
-      eventId: eventId,
-      checkpointId: checkpointId,
-      studentId: studentId,
-      staffUserId: staffUserId,
-      status: ScanStatus.pending,
-    );
-    _database.execute(
-      '''
-      INSERT INTO $tableName (
-        scan_id, event_id, checkpoint_id, student_id, staff_user_id,
-        submission_status, received_at, replayed, legacy, legacy_status
-      ) VALUES (?, ?, ?, ?, ?, 'pending', NULL, NULL, 0, NULL);
-    ''',
-      [
-        record.scanId,
-        record.eventId,
-        record.checkpointId,
-        record.studentId,
-        staffUserId,
-      ],
-    );
-    return record;
+      // A terminal conflict must not be bypassed by creating a new UUID for
+      // the same event/checkpoint/Student ID. It remains support-only evidence.
+      final conflict = _database.select(
+        '''
+        SELECT scan_id FROM $tableName
+        WHERE staff_user_id = ? AND event_id = ? AND checkpoint_id = ?
+          AND student_id = ? AND submission_status = 'blocked' AND legacy = 0
+        LIMIT 1;
+      ''',
+        [staffUserId, eventId, checkpointId, studentId],
+      );
+      final offlineConflict = _database.select(
+        '''
+        SELECT capture_id FROM offline_claims
+        WHERE staff_user_id = ? AND event_id = ? AND checkpoint_id = ?
+          AND student_id = ? AND status != 'submitted' LIMIT 1;
+        ''',
+        [staffUserId, eventId, checkpointId, studentId],
+      );
+      if (conflict.isNotEmpty || offlineConflict.isNotEmpty) {
+        throw StateError(
+          'This scan payload has unresolved evidence. Contact support.',
+        );
+      }
+
+      final record = ScanRecord(
+        scanId: const Uuid().v4(),
+        eventId: eventId,
+        checkpointId: checkpointId,
+        studentId: studentId,
+        staffUserId: staffUserId,
+        status: ScanStatus.pending,
+      );
+      _database.execute(
+        '''
+        INSERT INTO $tableName (
+          scan_id, event_id, checkpoint_id, student_id, staff_user_id,
+          submission_status, received_at, replayed, legacy, legacy_status
+        ) VALUES (?, ?, ?, ?, ?, 'pending', NULL, NULL, 0, NULL);
+      ''',
+        [
+          record.scanId,
+          record.eventId,
+          record.checkpointId,
+          record.studentId,
+          staffUserId,
+        ],
+      );
+      return record;
+    });
   }
 
   Future<List<ScanRecord>> readRecent({int limit = 10}) async {
@@ -596,6 +615,9 @@ class SecureAttendanceStore {
     offlineUuid(assignmentId);
     _database.execute('BEGIN IMMEDIATE;');
     try {
+      if (hasUnsettledV2()) {
+        throw StateError('Resolve successor preparation evidence first.');
+      }
       final rows = _database.select(
         '''
         SELECT request_id FROM offline_requests
@@ -727,14 +749,10 @@ class SecureAttendanceStore {
           'Resolve or escalate the original evidence first.',
         );
       }
-      final count =
-          _database
-                  .select(
-                    "SELECT count(*) AS total FROM offline_claims "
-                    "WHERE status != 'submitted';",
-                  )
-                  .single['total']
-              as int;
+      if (hasUnsettledV2()) {
+        throw StateError('Resolve successor preparation evidence first.');
+      }
+      final count = installationUnresolvedCount();
       if (count >= offlineQueueCapacity) {
         throw const OfflineCaptureException(
           'The unresolved offline queue is full. Sync or contact support before capturing again.',

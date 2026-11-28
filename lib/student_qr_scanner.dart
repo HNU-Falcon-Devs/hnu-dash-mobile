@@ -31,10 +31,12 @@ class StudentQrScannerPage extends StatefulWidget {
     super.key,
     this.scannerBuilder,
     this.openSettings = openAppSettings,
+    this.onObservation,
   });
 
   final ScannerSurfaceBuilder? scannerBuilder;
   final Future<bool> Function() openSettings;
+  final Future<void> Function(String studentId)? onObservation;
 
   @override
   State<StudentQrScannerPage> createState() => _StudentQrScannerPageState();
@@ -88,6 +90,15 @@ class _StudentQrScannerPageState extends State<StudentQrScannerPage> {
     // cannot create another confirmation or capture.
     _handling = true;
     setState(() => _message = null);
+    final onObservation = widget.onObservation;
+    if (onObservation != null) {
+      try {
+        await onObservation(studentId);
+      } catch (_) {
+        if (mounted) Navigator.of(context).pop();
+        return;
+      }
+    }
     if (widget.scannerBuilder == null) {
       try {
         await _controller.stop();

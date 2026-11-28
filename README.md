@@ -120,3 +120,72 @@ The job uses the pinned Flutter SDK, enforces the lockfile, inventories Dart pac
 | Flutter engine, Dart packages, Android Gradle dependencies, bundled scanner/ML Kit, other native libraries | Inventory from job logs; reconcile versions, native hashes and exact upstream license texts/third-party terms, including transitive and bundled material. Package-root notice hashes are evidence of candidates, not proof of completeness. |
 
 No distribution clearance: verify upstream binary provenance (packaging/stripping can change hashes), security advisories, exact license/attribution requirements, institution approval, and provide offline user-accessible notices plus required accompanying materials before redistribution. No new dependencies or license acceptance inferred. The current developer APK identity is not a production identity, and existing encrypted evidence must not be deleted or moved to force an upgrade. Signed release, production config, device support policy and physical encrypted-data upgrade checks remain separately gated by [Mobile #19](https://github.com/HNU-Falcon-Devs/hnu-dash-mobile/issues/19), [Mobile #13](https://github.com/HNU-Falcon-Devs/hnu-dash-mobile/issues/13) and [Backend #24](https://github.com/HNU-Falcon-Devs/hnu-dash-backend/issues/24).
+
+## M1 policy 2 — fixture-only local-first consumer
+
+Authorized [M1 package](https://github.com/HNU-Falcon-Devs/hnu-dash-backend/issues/27#issuecomment-7226350590)
+and [owner approval](https://github.com/HNU-Falcon-Devs/hnu-dash-backend/issues/27#issuecomment-7226560645).
+Canonical Backend revision `c53cbdcfab92d99857f91de1b7046856e7e63de2`:
+[B1 preparation](https://github.com/HNU-Falcon-Devs/hnu-dash-backend/blob/c53cbdcfab92d99857f91de1b7046856e7e63de2/docs/integration/offline-first-b1-foundation.md)
+and [B2 evidence/accounting](https://github.com/HNU-Falcon-Devs/hnu-dash-backend/blob/c53cbdcfab92d99857f91de1b7046856e7e63de2/docs/integration/offline-first-b2-reconciliation.md).
+
+- `lib/offline_v2.dart`: exact policy 2 receipt/clock/status parsing, separate QR
+  and confirmation observations, advisory consecutive checkpoint/category
+  warnings. B2 is the only eligibility authority.
+- `lib/offline_v2_gateway.dart`: explicit injected fixture context; no
+  connection from `main.dart` or normal Staff navigation. The harness must
+  provide the securely restored original owner, a monotonic account-change
+  epoch (including sign-out and A→B→A), live session for RPCs and foreground
+  state. No new offline login. Each request pins the bearer via the existing
+  per-query header technique. Late results after account/lifecycle change
+  leave immutable attempts unconfirmed.
+- SQLCipher schema 4 adds separate requests/preparations/claims. No v1
+  conversion, rekey or deletion. Original request UUID/observation is
+  persisted before dispatch; a replay cannot create a response anchor.
+  The same owner cannot create new mixed-version work while another
+  version has unresolved claims/preparations; legacy retry/accounting
+  remains available. Both versions share the installation-wide 2,400
+  unresolved offline claim guard; only counts are shared across accounts.
+  A failed key or malformed context fails closed; no reset/purge.
+- Android `elapsedRealtime()` (includes sleep) and best-effort API 24
+  `Settings.Global.BOOT_COUNT` supply client evidence; the baseline unsigned
+  APK manifest reports minSdk 24. Neither is an attestation. Native
+  observation at the QR callback (not a camera frame timestamp) is distinct
+  from explicit confirmation. Original request and response observations
+  are stored; a same-boot app-process restart can recover them. Reboot,
+  unavailable marker, replay without original response end, clock jumps and
+  unknown fields remain uncertain; no fabricated anchor or local time limit.
+  Clock bounds are advisory and use B2's synthetic constants, not measured
+  drift. Physical Android clock/reboot/secure recovery has not been tested.
+- Explicit stop is reversible only while the original scope remains safe
+  and no terminal status/intent is retained. Capture needs no network and
+  cannot upload automatically. Known SYNCING/terminal status stops collection;
+  a disconnected device may be stale. New admission requires SYNCING/unsealed
+  status; Backend checks the actual server deadline, not device wall time.
+  Before dispatch persist attempted state; definitive admission denial is
+  not an acknowledgement, ambiguous sent attempts retain exact payload
+  for authorized replay after closure/seal/accounting. No skip or next group.
+- Completion requires explicit count, matching server/local distinct durable
+  submissions (including zero), no unresolved/blocked records and a stored
+  immutable intent. Lost response retries the same count. A status-only
+  completed disposition is not a fabricated local receipt. Loss and terminal
+  status never enable capture. No roster oracle or official attendance claim.
+
+| Exact RPC | Named parameters |
+| --- | --- |
+| `prepare_offline_capture_v2` | `p_event_id,p_assignment_id,p_request_id` |
+| `get_offline_preparation_status_v2` | `p_preparation_id` |
+| `submit_offline_capture_v2` | `p_preparation_id,p_capture_id,p_checkpoint_id,p_student_id,p_clock` |
+| `complete_offline_preparation_v2` | `p_preparation_id,p_acknowledged_count` |
+
+Generic submitted receipts are not accepted attendance. SQLSTATE 22023/23505
+retain blocked immutable claim evidence; 42501/55000 pause admission with
+original evidence retained; 40001, transport interruption and malformed
+acknowledgement remain unconfirmed. No client-side deadline admission or
+roster eligibility decision. The test-only workspace is under `test/`,
+not an ordinary navigation route. Mock transport and encrypted fixture tests
+do not establish actual Backend HTTP, real OAuth or physical Android
+acceptance. Ordinary version discovery, creation/opening/assignment and
+coordinated activation/cutover require separate Backend-owned contracts,
+combined tuple acceptance and owner authorization. Mobile #13/#19 and
+institutional QR/privacy/recovery/redistribution gates remain pending.
